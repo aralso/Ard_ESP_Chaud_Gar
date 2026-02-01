@@ -39,11 +39,13 @@
 const int PIN_Tint22 = 5;  // GPIO IN1 Temp interieure DHT22
 const int PIN_PAC = 4;     // GPIO OUT PAC PWM
 const int PIN_Text = 36;   //  Text:Entrée analogique 32 à 36 et 39
+const int PIN_Chaudiere = 19;
 #else                      // ESP32_DevKit
 //const int PIN_Tint = 13;  Défini dans le fichier appli.ino
 const int PIN_Tint22 = 5;     // GPIO IN1 Temp interieure DHT22
 const int PIN_PAC = 4;        //  OUT PAC - PWM  40kOhm+100nF(Fc=40Hz) et PWM=40khz
 const int PIN_Text = 36;      //  Text:Entrée analogique 32 à 36 et 39
+const int PIN_Chaudiere = 19;
 #ifdef ESP32_v1
   const int PIN_RXModbus = 16;  // s3:18  devkitv1:16 RO
   const int PIN_TXModbus = 17;  // s3:17  devkitv1:17 DI
@@ -55,8 +57,8 @@ const int PIN_on = 19;   // allumage et extinction d'un système avec 2 boutons
 const int PIN_off = 19;
 //const int PIN_RE = 32;
 //const int PIN_DE = 33;
-const int PIN_RXSTM = 18;  // RX
-const int PIN_TXSTM = 17;  // TX
+const int PIN_RXSTM = 18;  // RX STM32
+const int PIN_TXSTM = 17;  // TX STM32
 #endif
 //#define sorties analogique : 25 ou 26 (avec Dacwrite)
 
@@ -96,6 +98,16 @@ typedef struct {
     uint32_t data;                 // Donnée associée (ex: valeur capteur, byte UART)
 } systeme_eve_t;
 
+// planning 
+ #define NB_MAX_PGM  3
+ typedef struct {
+ 	 uint8_t ch_debut;   // debut de chauffe :heure par pas de 10 minutes
+	 uint8_t ch_fin;   // fin de chauffe
+	 uint8_t ch_type;     // 0:tous les jours, 1:semaine, 2:week-end (2 bits)
+	 uint8_t ch_consigne;  // 5° à 23°C, par pas de 0,1°C
+	 uint8_t ch_cons_apres;  // 3° à 23°C, par pas de 0,5°C (6 bits)
+} planning_t;
+
 /* Codes erreur*/
 #define Code_erreur_Tint 1
 #define Code_erreur_Text 2
@@ -109,7 +121,7 @@ typedef struct {
 
 #define DEBOUNCE_INTERVAL 300  // Temps anti-rebond en ms
 
-constexpr  int NB_Graphique = 6;  // Temp Ext, Temp int, Temp eau, Durée fct, durée arret, Temp min Evapo 
+constexpr  int NB_Graphique = 6;  // Temp Ext, Temp int, Temp eau, Durée fct, durée arret, Pression 
 constexpr  int NB_Val_Graph = 99;
 
 extern uint8_t protocole;
@@ -118,7 +130,7 @@ extern QueueHandle_t eventQueue;  // File d'attente des événements sequenceur
 extern uint16_t erreur_queue;
 extern TimerHandle_t debounceTimer;
 extern uint8_t periode_cycle;
-extern float TPAC, Tint, Text, loi_eau_Tint, T_obj, T_loi_eau;
+extern float Teau, Tint, Text, loi_eau_Tint, T_obj, T_loi_eau;
 
 extern double Consigne, Input, Output;
 extern double Kp, Ki, Kd;
@@ -127,6 +139,11 @@ extern uint8_t HG, Ballon;
 extern uint8_t mode_pid;
 extern const int PIN_Tint;
 extern uint8_t skip_graph;
+
+extern planning_t plan[];
+extern uint16_t forcage_duree;
+extern uint8_t forcage_consigne;
+extern uint8_t ch_arret;
 
 extern int16_t graphique[NB_Val_Graph][NB_Graphique];
 

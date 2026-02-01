@@ -1,25 +1,9 @@
 /* 
 
-TODO : vérifier conso, remplacer régulateur 3V, mettre en veille, terminer wifi_AP
+TODO : 
 
-v1.16 12/2025 amelioration graphique compresseur
-v1.15 12/2025 Ajout 2 graphiques cycle compresseur & temp Evapo min, affichage infos compresseur & forage, ajout reset si pas de wifi>24h
-v1.14 11/2025 augment pile event, augment watchdog, bug count log, ajout h fct compresseur
-v1.13 10/2025 bug PID, consigne non float, inversion variables 18 et 19, 
-v1.12 09/2025 si erreur_queue => ajout d'un numero de queue d'erreur, ajout queueUart1
-v1.11 07/2025 correct bug sur websocket, amélioration lecture Tint, test wifi toutes les 3 minutes
-v1.10 06/2025 non fonctionnel - copie de Ard_transmetteur(freertos). log_flash longueur variable, sécurisations diverses
-              bouton0 pour wifi_AP
-v1.9 03/2025 : ratio Tint, affichage marche ballon, limite graphique 35°C, periode cycle non modifiable, amelio erreurs
-v1.8 02/2025 : ethernet, simplification index.html(27053 car->26400), requetes set&get, Text:1h, bug uptime, suppression socket navigateur, ajout regM 158 dans page valeurs
-v1.7 02/2025 : ajout websocket vers VPS, bug http
-v1.6 02/2025 : tab pac, valeurs négatives, temp ext 24h, relance wifi, watchdog, securisation
-v1.5 02/2025 : radiateurs en secours de la PAC
-v1.4 01/2025 : ajout Modbus, adresse IP fixe, mosfet(BS170 ou 2N7000) en sortie, formule Béta pour Text, limit pid avec loi d'eau, mode_pid,
-               radiateurs. Gestion erreur Text & Tint. Flash:82% RAM:16%
-v1.3 12/2024 mise au point : inversion des sens de régulation/mesure temp ext
-v1.2 12/2024 : fonctionnel
-v1.1 12/2024 : non fonctionnel
+v1.2 12/2025 modif site web, compil ok
+v1.1 12/2025 copie de PAC_Catalane v1.16
 
 Interrogation des données par la liaison série (recep_message) : 2-1 (type1, reg1)
 
@@ -48,27 +32,22 @@ Configuration des options de programmation :
 #define MODE_Wifi  // Wifi sinon Ethernet
 //#define Wifi_AP    // AP sinon STA
 
-//#define DEBUG  // mode station, pas de websocket, pas de sécurite
+#define DEBUG  // mode station, pas de websocket, pas de sécurite, emulation valeurs STM32
 
-#define WatchDog
-//#define STM32  incompatible du modbus, sauf à changer les pin
-
+//#define WatchDog
+#define STM32  //incompatible du modbus, sauf à changer les pin
 
 
 #ifdef DEBUG   // debug
   #define Sans_securite
   #define Sans_websocket
 #else   // ops
-  #define Temp_int_DHT22
+
 #endif
 
-//#define Sans_securite
-//#define Sans_websocket
-
-#define MODBUS
 
 #define DELAI_PING  180  // en secondes, pour le websocket
-#define Version "V1.16"
+#define Version "V1.2"
 
 #define DEBUG_ETHERNET_WEBSERVER_PORT Serial
 
@@ -94,16 +73,12 @@ static bool eth_connected = false;
 #include "time.h"
 #include <base64.h>  // Nécessaire pour encoder les données binaires
 
-//#include <SoftwareSerial.h>
-//#include <ESPSoftwareSerial.h>
-//#include <ModbusRtu.h>
 // Suppression des warnings de fonctions non utilisées pour ModbusMaster
-#pragma GCC diagnostic push
+/*#pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-function"
-#include <ModbusMaster.h>
 #pragma GCC diagnostic pop
-//#include <EEPROM.h>
-//#include <FastLED.h>
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#pragma GCC diagnostic pop*/
 
 #ifdef __cplusplus
 extern "C" {
@@ -125,45 +100,13 @@ extern "C" {
 
 #include "variables.h"
 
-
-/*  ---- MODBUS  -----
-// Commandes MODBUS
-  Arret chauffage : 158 : 0 ou 1
-  Temperature consigne chauffage : 32 : en degrés 
-  Arret ECS : 160 : 0 ou 1
-  Temperature de consigne ECS : 38 : en degrés
-
-// Lectures MODBUS
-  Temperature exterieure : 1
-  Temperature ballon ECS : 19
-  Temperature départ/retour : 12 et 11
-  Temperature circuit de chauffage actuelle : 30
-  Temperature consigne chauffage : 31
-  Puissance electrique actuelle compresseur : 25
-  Temperature de consigne ECS : 37*/
-
-
-
-//#define MAX485_DE_RE 32  // non utilisé
-#define MODBUS_SPEED  19200  // bauds   VMC:9600   PAC:19200
-#define MODBUS_PARITY SERIAL_8N2  // VMC :SERIAL_8E1  PAC:SERIAL_8N2
-
-//#define RE 32  // Connect RE terminal with 32 of ESP
-//#define DE 33    // Connect DE terminal with 33 of ESP
-uint16_t ModSendBuffer[8];
-int16_t ModReadBuffer[16];
-ModbusMaster node;  //object node for class ModbusMaster
-
-uint8_t err_wifi_repet;  // permet de resetter si le wifi ne se rétablit pas
+uint8_t err_wifi_repet;  // permet de resetter si le wifi ne se rétablit pas au bout de 4 jours
 
 uint8_t init_masquage=1;
 
 // variable globale de 4000c en RAM pour dump log et autres requetes
-#define MAX_DUMP 5500  // 1000 car par graphique
+#define MAX_DUMP 5500  // 1050 car par graphique
 char buffer_dmp[MAX_DUMP];  // max 250 logs, 16 octets chacun
-
-/*uint16_t max_data = 4500;
-char *buffer_dmp = (char *)malloc(max_data);*/
 
 
 #ifdef MODE_Wifi
@@ -171,10 +114,7 @@ char *buffer_dmp = (char *)malloc(max_data);*/
   #include <AsyncTCP.h>
   #include <ESPAsyncWebServer.h>
   // Suppression des warnings de dépréciation pour ArduinoWebsockets
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-#include <ArduinoWebsockets.h>
-#pragma GCC diagnostic pop
+  #include <ArduinoWebsockets.h>
 
   // adresse IP pour le Wifi_Access Point
   const char *ssid_AP = "ESP32";  // Enter SSID here pour l'AP
@@ -188,7 +128,7 @@ char *buffer_dmp = (char *)malloc(max_data);*/
   // Adresse IP pour le wifi_station (en mode debug)
   const char *ssid = "garches";               // Enter SSID du Routeur Wifi : garches:garches  kerners:kerners catalane:catalane  Theoule:SFR_EFF0
   const char *password = "196492380";    //Enter Password here
-  IPAddress Slocal_ip(192, 168, 251, 50);  // Définir l'adresse IP statique souhaitée Garches:251.50 Catalane:248.5
+  IPAddress Slocal_ip(192, 168, 251, 31);  // Définir l'adresse IP statique souhaitée Garches:251.50 Catalane:248.5
   IPAddress Sgateway(192, 168, 251, 1);   // Définir la passerelle (généralement l'adresse du routeur)
   IPAddress Ssubnet(255, 255, 255, 0);    // Masque de sous-réseau
   IPAddress SprimaryDNS(8, 8, 8, 8);      // DNS Primaire (Google DNS)
@@ -239,7 +179,7 @@ char mdp_routeur[16]="";
 
 int16_t  graphique [NB_Val_Graph][NB_Graphique];
 
-uint16_t nb_err_wifi=0;
+uint16_t nb_err_reseau=0;
 uint16_t erreur_queue=0;
 uint8_t num_err_queue[5];
 uint8_t cpt_init=0;
@@ -327,7 +267,7 @@ TimerHandle_t xTimer_Watchdog;
 TimerHandle_t xTimer_3min;
 TimerHandle_t xTimer_24H;
 TimerHandle_t xTimer_Cycle;
-TimerHandle_t xTimer_Compresseur;
+//TimerHandle_t xTimer_Compresseur;
 TimerHandle_t xTimer_Securite;
 
 
@@ -343,9 +283,7 @@ uint8_t etat_connect_ethernet = 0;
 
 AsyncWebServer server(80);
 
-uint32_t temp24h;
-uint16_t nb_24h;
-
+uint8_t cycle24h,  temp_moy24h;
 
 
 #define DEBOUNCE_INTERVAL 300  // Temps anti-rebond en ms
@@ -396,7 +334,7 @@ char heure_string[16] = "\"\"";
 int periode_lecture_heure = 5;  // init :5 secondes  ensuite:30 sec
 
 
-// securite PAC
+// securite modif
 unsigned long temps_activ_secu;
 uint8_t cpt_securite = 0;
 
@@ -467,24 +405,6 @@ const char* verbose_reset_reason(int reason) {
   }
 }
 
-  /*switch (reason) {
-    case 1: snprintf(resetREAS, 20, "Vbat power on reset"); break;
-    case 3: snprintf(resetREAS, 20, "Soft reset dig core"); break;
-    case 4: snprintf(resetREAS, 20, "Watch dog  dig core"); break;
-    case 5: snprintf(resetREAS, 20, "Deep Sleep dig core"); break;
-    case 6: snprintf(resetREAS, 20, "SLC module dig core"); break;
-    case 7: snprintf(resetREAS, 22, "Timer G0 WDog dig core"); break;
-    case 8: snprintf(resetREAS, 22, "Timer G1 WDog dig core"); break;
-    case 9: snprintf(resetREAS, 20, "RTC WDog dig core"); break;
-    case 10: snprintf(resetREAS, 20, "Instr tested  CPU"); break;
-    case 11: snprintf(resetREAS, 20, "Time Group reset CPU"); break;
-    case 12: snprintf(resetREAS, 20, "Software reset CPU"); break;
-    case 13: snprintf(resetREAS, 20, "RTC WDog Reset CPU"); break;
-    case 14: snprintf(resetREAS, 20, "APP CPU, by PRO CPU"); break;
-    case 15: snprintf(resetREAS, 22, "vdd volt is not stable"); break;
-    case 16: snprintf(resetREAS, 25, "RTC WDog dig core/rtc mod"); break;
-    default: snprintf(resetREAS, 20, "NO_MEAN");
-  }*/
 
 
 #ifndef MODE_Wifi  // Pour Ethernet cablé
@@ -567,7 +487,7 @@ void vTimer24HCallback(TimerHandle_t xTimer)
     }
 }
 
-// timeout chaque 15 minutes : cycle
+// timeout chaque 60 minutes : cycle
 void vTimerCycleCallback(TimerHandle_t xTimer)
 {
     systeme_eve_t evt = { EVENT_CYCLE, 0 };  // Exemple : donnée = 123
@@ -749,7 +669,7 @@ void taskHandler(void *parameter) {
                 case EVENT_INIT: {
                   if (!cpt_init)
                   {
-                    // 10 secondes apres l'initialisation : fin masquage envoi transmetteur
+                    // 10 secondes apres l'initialisation : fin masquage entrees
                     init_10_secondes();
                     init_masquage=0;
                     Serial.println("fin masquage des entrees");
@@ -793,7 +713,7 @@ void taskHandler(void *parameter) {
                       Serial.print(uartMsg1.msg[i]);
                     }
                     Serial.println();
-                    recep_message1(uartMsg1.msg);
+                    recep_message1(&uartMsg1);
                   }                  
                   break;
                 }
@@ -856,15 +776,25 @@ void taskHandler(void *parameter) {
 
                 case EVENT_3min:
                 {
-                  uint8_t test_goog = testConnexionGoogle();
-                  uint8_t test_wifi = WiFi.status();
-                  if ((test_wifi != 3) || (test_goog))
-                  {
-                    nb_err_wifi++;
-                    server.end();  // sécuriser l'état précédent
-                    reConnectWifi();
-                    startWebServer();
-                  }
+                  #ifndef NO_RESEAU
+                    uint8_t test_goog = testConnexionGoogle();
+                    uint8_t test_wifi=3;
+                    if (mode_reseau != 14)
+                      test_wifi = WiFi.status();
+                    if ((test_wifi != 3) || (test_goog))
+                    {
+                      Serial.println("pas de connec reseau");
+                      nb_err_reseau++;
+                      if (mode_reseau!=14)
+                      { 
+                        server.end();  // sécuriser l'état précédent
+                        reConnectWifi();
+                        startWebServer();
+                      }
+                    }
+                    else
+                      Serial.println("test reseau ok");
+                  #endif
                 }
                 break;
 
@@ -875,6 +805,10 @@ void taskHandler(void *parameter) {
                   // faire un ping pour vérifier que la liaison IP fonctionne
                   uint8_t test_goog = testConnexionGoogle();
                   uint8_t test_wifi = WiFi.status();
+                  #ifndef NO_RESEAU
+                    if (mode_reseau != 14)
+                      test_wifi = WiFi.status();
+                  #endif
 
                   /*uint8_t test_http = testHttpServerLocal();
                   test_http=0;
@@ -884,45 +818,59 @@ void taskHandler(void *parameter) {
                   vTaskDelay(1000/ portTICK_PERIOD_MS);
                   if ((test_wifi!=3) || (test_goog))  // relance wifi
                   {
-                    log_erreur(Code_erreur_wifi, test_wifi, test_goog);
-                    if (err_wifi_repet > 2)  // au bout de 4 jours sans wifi => reset
-                    {
-                      // reset
-                      param_wdt_delay = WDT_TIMEOUT * 5;
-                      writeLog('S', 8, 0, 0, "Boot wi");
-                    }
-                    else // premiere erreur
-                    {
-                      err_wifi_repet=1;
-                      server.end();  // sécuriser l'état précédent
-                      reConnectWifi();
-                      startWebServer();
-                    }
+                    #ifndef NO_RESEAU
+                      log_erreur(Code_erreur_wifi, test_wifi, test_goog);
+                      if (err_wifi_repet > 2)  // au bout de 4 jours sans reseau => reset
+                      {
+                        // reset
+                        writeLog('S', 8, 0, 0, "Boot wi");
+                        ESP.restart();
+                      }
+                      else // premieres erreurs
+                      {
+                        err_wifi_repet=1;
+                        server.end();  // sécuriser l'état précédent
+                        if (mode_reseau!=14)
+                          reConnectWifi();
+                        startWebServer();
+                      }
+                    #endif
                   }
 
                   // Log toutes les 24 heures : nb d'erreurs wifi et temp moyenne
-                  if (nb_err_wifi>255) nb_err_wifi=255;
-                  uint8_t temp_moy;
-                  if (nb_24h)
-                    temp_moy = (uint8_t)(temp24h / nb_24h);
-                  else
-                    temp_moy = 0;
-                  nb_24h=0;
-                  temp_moy=0;
+                  if (nb_err_reseau>255) nb_err_reseau=255;
+                  cycle24h=0;
+                  temp_moy24h=0;
 
-                  writeLog('K', 0, (uint8_t)nb_err_wifi, temp_moy, "24H");
-                  nb_err_wifi=0;
+                  UartMessage_t uartMsg1; // Variable pour stocker la réponse
+                  // 1. Vider les anciens messages résiduels dans la queue (sécurité)
+                  while (xQueueReceive(QueueUart1, &uartMsg1, 0)); 
+                  // 2. Envoyer la demande au STM32
+                  Serial1.printf("JCHL24");
+                  // 3. Attendre la réponse pendant 2 secondes max (bloquant pour la tâche Appli)
+                  if (xQueueReceive(QueueUart1, &uartMsg1, pdMS_TO_TICKS(2000)) == pdTRUE)
+                  {
+                      // La réponse est arrivée !
+                      Serial.printf("Réponse JCHL reçue : %s\n", uartMsg1.msg);
+                      // Exemple de parsing (à adapter selon le format exact envoyé par le STM32)
+                      sscanf(uartMsg1.msg, "ICHL:%hhu:%hhu", &cycle24h, &temp_moy24h);
+                  } else {
+                      // Timeout
+                      Serial.println("Erreur : Pas de réponse STM32 après 2s");
+                  }
+
+                  writeLog('K', cycle24h,  temp_moy24h, (uint8_t)nb_err_reseau, "24H");
+                  nb_err_reseau=0;
+
                   break;
                 }
 
                 case EVENT_CYCLE:
                   event_mesure_temp();
-                  nb_24h++;
-                  temp24h += (uint32_t) (Tint*10);
                   break;
 
                 case EVENT_CYCLE_Compresseur:
-                  event_mesure_compresseur();
+                  //event_mesure_compresseur();
                   break;
                   
                 case EVENT_ERREUR:
@@ -1004,6 +952,8 @@ void setup()
     cpt_securite = 10;
   #endif
 
+  heure_arret=0;
+  dernier_fct=0;
 
   Serial.println(" ");
   Serial.print("Initialisation - reset:");
@@ -1032,7 +982,8 @@ void setup()
     xTaskCreate(uart1Task, "UART1Task", 8192, NULL, 3, NULL);  // priorité 3 plus élevée
   #endif
 
-
+  // Configuration des sorties
+  pinMode(PIN_Chaudiere, OUTPUT);
   // Configurer l'interruption GPIO sur GPIO 18 (ex: bouton poussoir)
   //pinMode(18, INPUT_PULLUP);
   //attachInterrupt(digitalPinToInterrupt(18), onGPIO, FALLING);
@@ -1069,7 +1020,7 @@ void setup()
   #endif  // MODBUS
 
   #ifdef STM32
-    //Serial1.begin(115200, SERIAL_8N1, PIN_RXSTM, PIN_TXSTM); // UART1 = liaison avec l'autre ESP32
+    Serial1.begin(115200, SERIAL_8N1, PIN_RXSTM, PIN_TXSTM); // UART1 = liaison avec l'autre ESP32
     //esp_sleep_enable_uart_wakeup(UART_NUM_1);  
   #endif
 
@@ -1260,16 +1211,18 @@ void setup()
 
   //xTimerStart(debounceTimer, 100);  // lecture initiale pour lire l'état des boutons
 
-  // Timer cycle
+
+  // Timer cycle : lecture temp exterieur par internet
   uint16_t perio = periode_cycle*60;  // minutes -> secondes
   if (mode_rapide==12) perio = periode_cycle;   // en secondes
   xTimer_Cycle= xTimerCreate ("Cycle", (uint32_t)perio*(1000/portTICK_PERIOD_MS), pdTRUE, (void *) 0, vTimerCycleCallback);
   if (xTimer_Cycle == NULL)  Serial.println("Erreur : timer xTimer_cycle non créé !");
 
-  // Timer cycle compresseur
+/*  // Timer cycle compresseur
   uint16_t perio_comp = 30;  // en secondes
   xTimer_Compresseur= xTimerCreate ("Compresseur", (uint32_t)perio_comp*(1000/portTICK_PERIOD_MS), pdTRUE, (void *) 0, vTimerCompresseurCallback);
   if (xTimer_Compresseur == NULL)  Serial.println("Erreur : timer xTimer_compresseur non créé !");
+*/
 
   // Timer de Délai pour fin de modifs autorisée (securité) : 15 minutes
   xTimer_Securite= xTimerCreate ("Securite",15*60*(1000/portTICK_PERIOD_MS), pdFALSE, (void *) 0, vTimerSecuriteCallback);
@@ -1296,7 +1249,7 @@ void setup()
   xTimerStart(xTimer_3min,100);
   xTimerStart(xTimer_24H,100);
   xTimerStart(xTimer_Cycle,100);
-  xTimerStart(xTimer_Compresseur,100);
+  //xTimerStart(xTimer_Compresseur,100);
 
   delay(1000); // Attente 4 sec pour que les boutons se stabilisent
   
@@ -1920,7 +1873,6 @@ uint8_t requete_Set(uint8_t type, const char* param, const char* valStr)
   }
   if (type==3)  // set registre Modbus
   {
-    res = requete_SetRegM(paramV, val); 
   }
   if (type==4)  // set registre texte
   {
@@ -1979,7 +1931,7 @@ uint8_t requete_Set(uint8_t type, const char* param, const char* valStr)
       Serial.println(temps);
       //#endif
       cpt_securite = 0;
-      if ((strcmp(valStr, "Pac2025") == 0) && (temps < 14000) && (temps > 3000))  // entre 3sec et 14sec
+      if ((strcmp(valStr, "Chaud2025") == 0) && (temps < 14000) && (temps > 3000))  // entre 3sec et 14sec
       {
         #ifndef Sans_securite
           xTimerStart(xTimer_Securite,100);  // permet de couper la securite au bout de 15 minutes
@@ -2009,12 +1961,6 @@ uint8_t requete_Get(uint8_t type, const char* var, float *valeur)
   }
   if (type==3)  // get registre modbus
   {
-    uint16_t paramV = atoi(var);
-    int16_t val16;
-    res = read_modbus(paramV, &val16);
-    *valeur = (float)val16;
-    Serial.println(paramV);
-    Serial.println(*valeur);
   }
   if (type==1)  // get variable
   {
@@ -2515,14 +2461,16 @@ uint8_t requete_SetReg(int param, float valeurf)
       if (valeur == 13) {
         //ESP.restart();
         res = 0;
-        param_wdt_delay = WDT_TIMEOUT * 12;
         writeLog('S', 9, 0, 0, "Boot W");
+        delay(500);
+        //param_wdt_delay = WDT_TIMEOUT * 12;
+        esp_restart();  // Redémarrage logiciel sans effacer la RTC RAM
       }
 
     if (param == 4)  // registre 4 : Periode cycle (en minutes)
     {
       //#ifndef DEBUG
-      if ((valeur >= 10) && (valeur <= 60))  // entre 10 et 60 minutes
+      if ((valeur >= 10) && (valeur <= 120))  // entre 10 et 20 minutes
       {
         res = 0;
         periode_cycle = valeur;
@@ -2577,34 +2525,6 @@ uint8_t requete_SetReg(int param, float valeurf)
   return (res == 0 || res2 == 0) ? 0 : 1;
 }
 
-// type 3
-uint8_t requete_SetRegM(uint8_t param, int valeur) {
-  uint8_t res = 1;
-  if (cpt_securite) {
-    if (param == 158)  // registre 158 : Arret chauffage
-    {
-      if ((!valeur) || (valeur == 1))  // 0 ou 1
-      {
-        save_modbus(158, valeur);
-        res = 0;
-      }
-    }
-    else if (param == 38)  // registre 38 : save modbus temperature consigne ECS
-    {
-      if ((valeur >= 280) && (valeur <= 550))  // 28 a 55°C
-      {
-        save_modbus(38, valeur);
-        res = 0;
-      }
-    }
-    else
-    {
-      save_modbus(param, valeur);
-      res = 0;
-    }
-  }
-  return res;
-}
 
 
 // activation de 2 PIn pour allumage et extinction
@@ -2665,9 +2585,10 @@ void requete_status(char *json_response, uint8_t socket, uint8_t type)
   int day = (sec / 3600 / 24);
   snprintf(St_Uptime, 30, "%d jours %d heures %d min", day, hour, min);
 
-  uint8_t cycle_mul = 60;
-  if (mode_rapide == 12) cycle_mul = 1;
-  uint16_t Proch_periode = (periode_cycle * cycle_mul) - (sec - previousMillis_temp/1000);  // nb de secondes avant prochain PID
+  TickType_t now = xTaskGetTickCount();
+  TickType_t expir = xTimerGetExpiryTime(xTimer_Cycle);
+  TickType_t Proch_periode = (expir - now) * portTICK_PERIOD_MS/1000;    // nb de secondes avant prochaine mesure temp piscine DSB
+
 
   #ifdef MODBUS
     int16_t lect;
@@ -2713,19 +2634,37 @@ void requete_status(char *json_response, uint8_t socket, uint8_t type)
   char *p = json_response;
   *p++ = '{';
   if (socket)   p += sprintf(p, "\"action\":\"status\",");  // ajout de action=status si c'est un message socket
+  p += sprintf(p, "\"version\":\"%s\",", Version);
+  p += sprintf(p, "\"reset0\":\"%s\",", resetREASON0);
   p += sprintf(p, "\"heure_string\":%s,", heure_string);
+  p += sprintf(p, "\"uptime\":\"%s\",", St_Uptime);
+  p += sprintf(p, "\"nb_reset\":%i,", nb_reset);
+  p += sprintf(p, "\"duree_reset\":\"%s\",", duree_RESET);
+  uint8_t modif=0;
+  if (cpt_securite) modif=1;
+  p += sprintf(p, "\"codeR_secu\":%i,", modif);
+  p += sprintf(p, "\"coche_secu\":%i,", modif);
+
+  p += sprintf(p, "\"periode_cycle\":%d,", periode_cycle);
+  p += sprintf(p, "\"PPE\":%i,", Proch_periode);
+
   p += sprintf(p, "\"Kp\":%.2f,", Kp);
   p += sprintf(p, "\"Ki\":%.4f,", Ki);
   p += sprintf(p, "\"Kd\":%.4f,", Kd);
   p += sprintf(p, "\"Tint\":%.1f,", Tint);
-  p += sprintf(p, "\"Tint2\":%.2f,", Tint);
   p += sprintf(p, "\"Text\":%.1f,", Text);
-  p += sprintf(p, "\"TPAC\":%.1f,", TPAC);
+  p += sprintf(p, "\"Teau\":%.1f,", Teau);
   p += sprintf(p, "\"consigne\":%.1f,", Consigne);
   p += sprintf(p, "\"HG\":%d,", HG - 1);
-  p += sprintf(p, "\"Ballon\":%d,", Ballon - 1);
-  p += sprintf(p, "\"periode_cycle\":%d,", periode_cycle);
-  #ifdef MODBUS
+  p += sprintf(p, "\"Tloi\":%.1f,", T_loi_eau);
+  p += sprintf(p, "\"Tobj\":%.1f,", T_obj);
+  p += sprintf(p, "\"Output\":%.3f,", Output);
+  p += sprintf(p, "\"DerFct\":%i,", dernier_fct);
+  p += sprintf(p, "\"DerFin\":%i,", heure_arret);
+  p += sprintf(p, "\"ForD\":%i,", forcage_duree);
+  p += sprintf(p, "\"ForC\":%i,", forcage_consigne);
+  p += sprintf(p, "\"MarAr\":%i,", ch_arret-1);
+  /*#ifdef MODBUS
   p += sprintf(p, "\"TEx\":%.1f,", TEx);
   p += sprintf(p, "\"TEx1\":%.1f,", TEx1);
   p += sprintf(p, "\"TEx24\":%.1f,", TEx24);
@@ -2742,26 +2681,29 @@ void requete_status(char *json_response, uint8_t socket, uint8_t type)
   p += sprintf(p, "\"TEv\":%.1f,", TEv);
   p += sprintf(p, "\"MMB\":%d,", MMB);
   p += sprintf(p, "\"HCOMP\":%i,", HCOMP);
-  #endif
-  p += sprintf(p, "\"version\":\"%s\",", Version);
-  p += sprintf(p, "\"reset0\":\"%s\",", resetREASON0);
-  p += sprintf(p, "\"uptime\":\"%s\",", St_Uptime);
-  p += sprintf(p, "\"nb_reset\":%i,", nb_reset);
-  p += sprintf(p, "\"duree_reset\":\"%s\",", duree_RESET);
-  uint8_t modif=0;
-  if (cpt_securite) modif=1;
-  p += sprintf(p, "\"codeR_secu\":%i,", modif);
-  p += sprintf(p, "\"coche_secu\":%i,", modif);
-  p += sprintf(p, "\"Tloi\":%.1f,", T_loi_eau);
-  p += sprintf(p, "\"Tobj\":%.1f,", T_obj);
-  p += sprintf(p, "\"Output\":%.3f,", Output);
-  p += sprintf(p, "\"PPE\":%i,", Proch_periode);
-  p += sprintf(p, "\"etat_compr\":%i,", etat_compr);
-  p += sprintf(p, "\"DerFct\":%i,", dernier_fct);
-  p += sprintf(p, "\"DerFin\":%i,", heure_arret);
+  #endif*/
+  //p += sprintf(p, "\"etat_compr\":%i,", etat_compr);
+  //p += sprintf(p, "\"Ballon\":%d,", Ballon - 1);
 
 
   uint8_t i;
+  // --- Ajout des paramètres de planning (3 programmes maximum) ---
+  for (i = 0; i < NB_MAX_PGM; i++) {
+    // Calcul de l'espace restant dans le buffer MAX_DUMP
+    int remaining = MAX_DUMP - (p - json_response) - 100;
+    if (remaining < 60) break; // Sécurité si le buffer est presque plein
+
+    // Envoi sous forme compacte : "P0":"debut fin type consigne cons_apres"
+    int n = snprintf(p, remaining, "\"P%d\":\"%u %u %u %u %u\",", 
+                     i, 
+                     plan[i].ch_debut, 
+                     plan[i].ch_fin, 
+                     plan[i].ch_type, 
+                     plan[i].ch_consigne, 
+                     plan[i].ch_cons_apres);
+    if (n > 0 && n < remaining) p += n;
+  }
+  
   // Tableaux : E(erreurs) T(temp)
   if (!type)  // pas d'envoi des graphiques si type=1(maj)
   {
@@ -3035,11 +2977,51 @@ void recep_message(char *messa) // recept_uart
   }
 }
 
-void recep_message1(char *messa) // recept_uart1
+void recep_message1(UartMessage_t * messa) // recept_uart1
 {
     Serial.print("recept uart1:");
-    Serial.println(messa);
+    Serial.println(messa->msg);
     delay(1000);
+    traitement_rx(messa);
+}
+
+void traitement_rx(UartMessage_t * mess)
+{
+  uint8_t longueur_m = mess->longueur;
+  uint8_t * message_in = (uint8_t *) mess->msg;
+
+		if ((message_in[2] == 'C') && (message_in[3] == 'H'))  // Chaudiere
+		{
+			if (message_in[4] == 'E')  // Ecriture
+			{
+        if ((message_in[5] == 'P') && (longueur_m == 15))   // CHEPnxxyyzztt  Planning  %cCHEP%i%02X%02X%i%02X%02X  i, ch_debut[i], ch_fin[i], ch_type[i], ch_consigne[i], ch_cons_apres[i])
+        {
+          uint8_t i = message_in[6]-'0';
+          if (i < NB_MAX_PGM)
+          {
+             plan[i].ch_debut = decod_asc8(message_in+7);
+             plan[i].ch_fin = decod_asc8(message_in+9);
+             plan[i].ch_type = decod_asc8(message_in+11);
+             plan[i].ch_consigne = decod_asc8(message_in+13);
+             plan[i].ch_cons_apres = decod_asc8(message_in+15);
+            Serial.printf("CHEP%i%02X%02X%i%02X%02X", i, plan[i].ch_debut, plan[i].ch_fin, plan[i].ch_type, plan[i].ch_consigne, plan[i].ch_cons_apres);
+          }
+        }
+        if ((message_in[5] == 'F') && (longueur_m == 12))   // CHEFxxxxyy  Forcage  %cCHEF%04X%02X", message_in[1], forcage_duree, forcage_consigne);
+        {
+          uint16_t forcd = decod_asc16(message_in+6);
+          uint8_t forcc = decod_asc8(message_in+10);
+
+          forcage_duree = forcd;
+          forcage_consigne = forcc;
+        }
+        if ((message_in[5] == 'A') && (longueur_m == 7))   // CHEAx  Arret  %cCHEA%i", message_in[1], ch_arret)
+        {
+          if ((message_in[6] == '0') || (message_in[6] == '1'))
+            ch_arret = message_in[6] - '0';
+        }
+      }
+    }
 }
 
 void debounceCallback(TimerHandle_t xTimer)
@@ -3759,6 +3741,11 @@ void modif_timer_cycle(void)
     if (mode_rapide==12) perio = periode_cycle;   // en secondes
     xTimerChangePeriod(xTimer_Cycle,(uint32_t)perio*(1000/portTICK_PERIOD_MS),100);
     xTimerStart(xTimer_Cycle,100);
+
+  uint16_t period = periode_cycle*60;
+  if (mode_rapide) period = periode_cycle;
+
+  Serial1.printf("JVECy%i", period);  // Envoi de la duree du cycle au STM32, en secondes
 }
 
 void print_task_states() {
@@ -3968,4 +3955,32 @@ void protectUARTDuringWiFi() {
   #ifdef WatchDog
     esp_task_wdt_reset();
   #endif
+}
+
+uint8_t decod_asc8 (const uint8_t * index)
+{
+	uint8_t val=0;
+	for (uint8_t i=0; i<2; i++)
+	{
+		uint8_t car = *(index+1-i);
+		if (( car >='0') && ( car <= '9'))
+				val |= ((car-'0')<<(i*4));
+		else if (( car >='A') && ( car <= 'F'))
+				val |= ((car-'A'+10)<<(i*4));
+	}
+	return val;
+}
+
+uint16_t decod_asc16 (uint8_t * index)
+{
+	uint16_t val=0;
+	for (uint8_t i=0; i<4; i++)
+	{
+		uint8_t car = *(index+3-i);
+		if (( car >='0') && ( car <= '9'))
+				val |= ((car-'0')<<(i*4));
+		else if (( car >='A') && ( car <= 'F'))
+				val |= ((car-'A'+10)<<(i*4));
+	}
+	return val;
 }

@@ -6,7 +6,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <!--<meta http-equiv='refresh' content='30'/>-->
-<title>PAC Gardien</title>
+<title>Chaudiere</title>
 <style>
   body {font-family: Arial,Helvetica,sans-serif;background: #181818;color: #EFEFEF;font-size: 16px}
   section.main { display: flex }
@@ -55,21 +55,25 @@ const char index_html[] PROGMEM = R"rawliteral(
   }  
   .temperature {display: flex; gap: 15px; font-size: 18px;}
    h1 {font-size: 22px;  margin: 10px 0; }
+  table.pgm { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; background: #222; }
+  table.pgm th, table.pgm td { border: 1px solid #555; padding: 4px; text-align: center; }
+  table.pgm input { width: 40px; background: #333; color: #fff; border: 1px solid #666; text-align: center; }
+  table.pgm select { background: #333; color: #fff; border: 1px solid #666; font-size: 12px; }
 </style>
 </head>
 <body>
-    <h2>PAC Gardien</h2>
+    <h2>Chaudiere</h2>
     <h3></h3>
     <section class="main">
       <div id="logo">
-        <label for="nav-toggle-cb" id="nav-toggle">&#9776;&nbsp;&nbsp;Pilotage PAC</label>
+        <label for="nav-toggle-cb" id="nav-toggle">&#9776;&nbsp;&nbsp;Pilotage</label>
       </div>
       <div id="content">
         <div id="sidebar">
           <input type="checkbox" id="nav-toggle-cb" checked="checked">
           <nav id="menu">
 
-            <div class="input-group" id="consigne">
+            <div class="input-group" id="consigne-group">
                 <label for="consigne">Consigne      </label>
                 <!--<p STYLE="padding:0 0 0 6px;"></p>
                 <div class="container">
@@ -96,15 +100,15 @@ const char index_html[] PROGMEM = R"rawliteral(
                 </div>
             </div>
 
-            <div class="input-group" id="Ballon-group">
-              <label for="Ballon">Ballon</label>
+            <div class="input-group" id="Mar-group">
+              <label for="MarAr">Marche Chaudiere</label>
               <div class="switch">
-                  <input id="Ballon" type="checkbox"  class="default-action">
-                  <label class="slider" for="Ballon"></label>
+                  <input id="MarAr" type="checkbox"  class="default-action">
+                  <label class="slider" for="MarAr"></label>
               </div>
               <div class="default-action">
                 <div class="container">
-                  <div id="Ballon" class="default-action" ></div>
+                  <div id="MarAr_led" class="default-action" ></div>
                 </div>
               </div>                  
             </div>
@@ -112,12 +116,12 @@ const char index_html[] PROGMEM = R"rawliteral(
             <div class="input-group" id="HG-group">
               <label for="HG">Hors Gel</label>
               <div class="switch">
-                  <input id="HG" type="checkbox" %HG% class="default-action">
+                  <input id="HG" type="checkbox"  class="default-action">
                   <label class="slider" for="HG"></label>
               </div>
               <div class="default-action">
                 <div class="container">
-                  <div id="HG" class="default-action" ></div>
+                  <div id="HG_led" class="default-action" ></div>
                 </div>
               </div>                  
             </div>
@@ -158,6 +162,39 @@ const char index_html[] PROGMEM = R"rawliteral(
             <p>Uptime: <span id="uptime" class="default-action"></p>
 
           </nav>
+
+          <hr style="width:150px">
+          <label for="nav-toggle-pgm" class="toggle-section-label">&#9776;&nbsp;&nbsp;Programmes</label><input type="checkbox" id="nav-toggle-pgm" class="hidden toggle-section-button" checked="checked">
+          <section class="toggle-section">
+            <table class="pgm">
+              <thead>
+                <tr>
+                  <th>#</th><th>Dép.</th><th>Fin</th><th>Type</th><th>Cons.</th><th>Apr.</th>
+                </tr>
+              </thead>
+              <tbody>
+                <script>
+                  for(let i=0; i<3; i++) {
+                    document.write(`<tr>
+                      <td>${i}</td>
+                      <td><input type="text" id="P${i}_0" onchange="updatePlanning(${i},0,this.value)"></td>
+                      <td><input type="text" id="P${i}_1" onchange="updatePlanning(${i},1,this.value)"></td>
+                      <td>
+                        <select id="P${i}_2" onchange="updatePlanning(${i},2,this.value)">
+                          <option value="0">T.J.</option>
+                          <option value="1">Sem.</option>
+                          <option value="2">W.E.</option>
+                        </select>
+                      </td>
+                      <td><input type="text" id="P${i}_3" onchange="updatePlanning(${i},3,this.value)"></td>
+                      <td><input type="text" id="P${i}_4" onchange="updatePlanning(${i},4,this.value)"></td>
+                    </tr>`);
+                  }
+                </script>
+              </tbody>
+            </table>
+          </section>          
+
 
           <!--<div style="margin-top: 8px;"><center><span style="font-weight: bold;">Advanced Settings</span></center></div>-->
           <hr style="width:150px">
@@ -257,7 +294,7 @@ const char index_html[] PROGMEM = R"rawliteral(
               </div>
               <div class="default-action">
                 <div class="container">
-                  <div id="MMC" class="default-action" ></div>
+                  <div id="MMC_led" class="default-action" ></div>
                 </div>
               </div>                  
             </div>
@@ -485,6 +522,24 @@ const char index_html[] PROGMEM = R"rawliteral(
     erreur_heure = [];
     erreur_minute = [];
     maj=0;
+    
+    function stepsToTime(v) {
+        let totalMins = parseInt(v) * 10;
+        let h = Math.floor(totalMins / 60);
+        let m = totalMins % 60;
+        return h + "h" + (m < 10 ? "0" + m : m);
+    }
+    
+    function timeToSteps(t) {
+        let parts = t.toString().split(/[h:H]/);
+        if (parts.length < 2) {
+            let val = parseInt(t);
+            return isNaN(val) ? 0 : val;
+        }
+        let h = parseInt(parts[0]) || 0;
+        let m = parseInt(parts[1]) || 0;
+        return Math.min(255, Math.round((h * 60 + m) / 10));
+    }
 
     document.addEventListener('DOMContentLoaded', function (event) {
        var baseHost = document.location.origin;
@@ -493,6 +548,18 @@ const char index_html[] PROGMEM = R"rawliteral(
       const updateValue = (el, value, updateRemote) => {   // mise à jour de la valeur sur la page web
         updateRemote = updateRemote == null ? true : updateRemote
         let initialValue
+        
+        let ledEl = document.getElementById(el.id + "_led");
+        if (ledEl) {
+          if (value) {
+            ledEl.classList.remove('led-no');
+            ledEl.classList.add('led-red');
+          } else {
+            ledEl.classList.remove('led-red');
+            ledEl.classList.add('led-no');
+          }
+        }
+
         if (el.parentElement.className == 'container')  {
           if (value)
           {
@@ -753,6 +820,9 @@ const char index_html[] PROGMEM = R"rawliteral(
             if ((el.id === 'code_secu') || (el.id === 'coche_secu')) {
               setTimeout(() => { get_value('codeR_secu'); }, 1000);
             }
+            if ((el.id === 'HG') || (el.id === 'MarAr')) {
+              setTimeout(() => { get_value(el.id); }, 1000);
+            }
           })
       }
 
@@ -813,7 +883,67 @@ const char index_html[] PROGMEM = R"rawliteral(
             //console.log("val2:"+state[name]+"-"+val2+"-"+val2[0]+"-"+val2[1]+"-"+erreur_code[i]);
           }
         }
+        
+        for (var i = 0; i < 3; i++) {
+          let name = "P" + i;
+          if (state[name] !== undefined) {
+            let vals = state[name].split(" ");
+            for(let f=0; f<5; f++) {
+                let el = document.getElementById("P"+i+"_"+f);
+                if (el) {
+                  // Pour les consignes (index 3 et 4), on divise par 10 pour l'affichage
+                  if (f === 3 || f === 4) {
+                    el.value = (parseFloat(vals[f]) / 10).toFixed(1);
+                  } 
+                  // Pour les horaires (index 0 et 1), on convertit les pas de 10 min en HHhMM
+                  else if (f === 0 || f === 1) {
+                    el.value = stepsToTime(vals[f]);
+                  }
+                  else {
+                    el.value = vals[f];
+                  }
+                }
+            }
+          }
+        }
 
+        function updatePlanning(pIdx, fieldIdx, value) {
+          const reg = `P${pIdx}_${fieldIdx}`;
+          let valToSend = value;
+          // Pour les consignes (index 3 et 4), on multiplie par 10 avant d'envoyer
+          if (fieldIdx === 3 || fieldIdx === 4) {
+            valToSend = Math.round(parseFloat(value.toString().replace(',', '.')) * 10);
+          }
+          // Pour les horaires (index 0 et 1), on convertit le format HHhMM en pas de 10 min
+          else if (fieldIdx === 0 || fieldIdx === 1) {
+            valToSend = timeToSteps(value);
+          }
+          const query = `${document.location.origin}/Set?type=1&reg=${reg}&val=${valToSend}`;
+          fetch(query)
+            .then(response => {
+              console.log(`Update ${reg} finished, status: ${response.status}`);
+              // Relire la valeur exacte depuis l'ESP32 pour confirmer
+              setTimeout(() => {
+                const getQuery = `${document.location.origin}/Get?type=1&reg=${reg}`;
+                fetch(getQuery)
+                  .then(res => res.json())
+                  .then(state => {
+                    if (state.val !== undefined) {
+                      let el = document.getElementById(reg);
+                      if (fieldIdx === 3 || fieldIdx === 4) {
+                        el.value = (parseFloat(state.val) / 10).toFixed(1);
+                      } else if (fieldIdx === 0 || fieldIdx === 1) {
+                        el.value = stepsToTime(state.val);
+                      } else {
+                        el.value = state.val;
+                      }
+                    }
+                  });
+              }, 1000);
+            });
+        }
+        window.updatePlanning = updatePlanning;
+ 
         document.getElementById('erreurs_histo').innerHTML = ""; 
         for (i=0; i<NB_erreurs; i++)
         {

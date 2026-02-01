@@ -12,16 +12,14 @@ uint8_t min_max_pid;
 int8_t Pt1;
 uint8_t Pt2, Pt1Val, Pt2Val;
 
-uint8_t HG, Ballon, MMCh;
-uint8_t mode_pid;
+uint8_t HG, MMCh;
+uint8_t mode_regul;
 
-// graphique cycles compresseur
-uint8_t etat_compr;
-unsigned long milli_marche, milli_arret;
-uint16_t dernier_fct;
-uint16_t heure_arret;
-uint16_t T_evapo_min=700;  // +30*10   -30 à 30 : -30°C=0  0°C=300 10°C=400
-uint16_t Seuil_T_Evapo;  // Seuil T Evapo pour mettre à l'arret la PAC avant la mise en sécurité
+// planning programme chaudiere
+planning_t plan[NB_MAX_PGM];
+uint16_t forcage_duree;
+uint8_t forcage_consigne;
+uint8_t ch_arret;
 
 PID myPID(&Input, &Output, &Consigne, Kp, Ki, Kd, DIRECT);
 
@@ -56,10 +54,8 @@ uint16_t TBeta;
 #define R0E 10000  // Résistance à 25° pour une NTC10K
 uint16_t Therm0;
 
-// Sortie analogique vers PAC
-uint16_t S_analo_min;  // voltage pour -5°C
 uint16_t S_analo_max;  // voltage pour 20°C
-float TPAC = 18;
+float Teau = 18;
 float TRef = 18;
 
 #define TPACMIN 10
@@ -67,18 +63,10 @@ float TRef = 18;
 uint8_t TPacMin, TPacMax;
 
 // Régulation
-#define MODE 1  // 1:PAC 2:radiateur 3:PAC+Radiateur
+#define MODE 1  // 1:STM32 PID  2:ESP PID
 uint8_t Mode;
 
-
-
-uint16_t periode_lecture_temp = 1;  // 60, en minutes
-
-uint8_t init_nb_heures = 0;
-uint8_t init_heure_max = 0;
-float init_temp_max = -20;
-uint8_t init_heure_min = 0;
-float init_temp_min = 40;
+uint16_t heure_arret, dernier_fct;
 
 float loi_deau(float temp_ext, float temp_cons, float *Tloi);
 
@@ -131,6 +119,7 @@ void setup_0()
     graphique[2][4] = 48;  
     graphique[3][4] = 52;*/
   }
+
 }
 
 // setup : lecture nvs
@@ -159,10 +148,10 @@ void setup_nvs()
   myPID.SetTunings(Kp, Ki, Kd);
 
 
-  // periode du cycle
-  periode_cycle = preferences_nvs.getUChar("cycle", 0);  // de 10 a 60
-  if ((periode_cycle < 10) || (periode_cycle > 60)) {
-    periode_cycle = 15;
+  // periode du cycle : lecture Temp ext par internet
+  periode_cycle = preferences_nvs.getUChar("cycle", 0);  // de 10 a 120
+  if ((periode_cycle < 10) || (periode_cycle > 120)) {
+    periode_cycle = 60;
     preferences_nvs.putUChar("cycle", periode_cycle);
     Serial.printf("Raz periode cycle : val par defaut %imin\n\r", periode_cycle);
   }
@@ -176,6 +165,11 @@ void setup_nvs()
   }
   else
     Serial.printf("Mode rapide : %i\n\r", mode_rapide);
+
+  uint16_t period = periode_cycle*60;
+  if (mode_rapide) period = periode_cycle;
+
+  Serial1.printf("JVECy%i", period);  // Envoi de la duree du cycle au STM32, en secondes
 
   /*// valeurs de calibration sonde temperature exterieure
   TBeta = preferences_nvs.getUShort("Beta", 0);   // 3950
@@ -194,7 +188,7 @@ void setup_nvs()
     preferences_nvs.putUShort("R0", Therm0);   // 
   }*/
 
-  // Lecture des temperatures PAC minimum et Maximum
+/*  // Lecture des temperatures PAC minimum et Maximum
   TPacMin = preferences_nvs.getUChar("Tmin", 0);  // 10°C
   TPacMax = preferences_nvs.getUChar("Tmax", 0);  // 30°C
   if ((TPacMin < 5) || (TPacMin > 30) || (TPacMax < 15) || (TPacMax > 40) || (TPacMin >= TPacMax)) {
@@ -204,7 +198,7 @@ void setup_nvs()
     preferences_nvs.putUChar("Tmin", TPacMin);  //
     preferences_nvs.putUChar("Tmax", TPacMax);  //
   } else
-    Serial.printf("TPAC Min-Max: %i°C  %i°C\n", TPacMin, TPacMax);
+    Serial.printf("TPAC Min-Max: %i°C  %i°C\n", TPacMin, TPacMax);*/
 
 
   /* Text1 = preferences_nvs.getUShort("T1", 0);   // 10°C  *10
@@ -231,15 +225,16 @@ void setup_nvs()
   Serial.printf("Calib T.Ext: Point1: %i pour %.1f°C   Point2: %i°C -> %.1f°C\n", Text1Val, (float)Text1/10, Text2Val, (float)Text2/10) ;*/
 
   // Mode regulation : 1:normal, 2:loi d'eau avec Text, 3:fixe
-  mode_pid = preferences_nvs.getUChar("PID", 0);
-  if ((!mode_pid) || (mode_pid > 3)) {
-    mode_pid = 1;
-    preferences_nvs.putUChar("PID", mode_pid);
-    Serial.printf("Raz mode PID:%i\n\r", mode_pid);
+  mode_regul = preferences_nvs.getUChar("REGUL", 0);
+  if ((!mode_regul) || (mode_regul > 3)) {
+    mode_regul = 1;
+    preferences_nvs.putUChar("REGUL", mode_regul);
+    Serial.printf("Raz mode Regul:%i\n\r", mode_regul);
   } else
-    Serial.printf("mode PID:%i\n\r", mode_pid);
+    Serial.printf("mode Regul:%i\n\r", mode_regul);
 
-  TRef = (float)preferences_nvs.getUShort("TRef", 0) / 10;  // pour le cas de mode_pid=fixe
+
+  TRef = (float)preferences_nvs.getUShort("TRef", 0) / 10;  // pour le cas de mode_regul=fixe
   if ((TRef < 10) || (TRef > 30)) {
     TRef = 18.0;
     preferences_nvs.putUShort("TRef", 180);
@@ -248,23 +243,14 @@ void setup_nvs()
     Serial.printf("TRef=%f\n", TRef);
 
 
-
-  Seuil_T_Evapo = (float)preferences_nvs.getUShort("TEv", 0);  // Seuil arret T_evapo
-  if ((Seuil_T_Evapo < 100) || (Seuil_T_Evapo > 300)) {   // -20°C à 0°C
-    Seuil_T_Evapo = 200;   // -10°C
-    preferences_nvs.putUShort("TEv", 100);
-    Serial.printf("Raz Seuil T. Evapo:%f°C\n", ((float)(Seuil_T_Evapo)-300)/10);
-  } else
-    Serial.printf("Seuil T Evapo=%f°C\n", ((float)(Seuil_T_Evapo)-300)/10);
-
-
+  // Mode 1 : PID=STM32  2:PID=ESP32
   Mode = preferences_nvs.getUChar("Mode", 0);
   if ((!Mode) || (Mode > 3)) {
     Mode = MODE;
     preferences_nvs.putUChar("Mode", Mode);
-    Serial.printf("Raz Mode:%i\n", Mode);
+    Serial.printf("Raz Mode PID:%i\n", Mode);
   } else
-    Serial.printf("Mode :%i\n", Mode);
+    Serial.printf("Mode PID :%i\n", Mode);
 
   // valeurs de la loi d'eau
   Pt1 = preferences_nvs.getUChar("Pt1", 0) - 30;  // -5°C +30 =>25
@@ -319,12 +305,11 @@ void setup_nvs()
   } 
   Serial.printf("PWM PAC: -10°C:%i   30°C:%i\n", S_analo_min, S_analo_max) ;*/
 
-  // Initialisation des variables de consignes/HG/ballon/MMC
+  // Initialisation des variables de consignes/HG/MMC
   Consigne_G = preferences_nvs.getUChar("Cons", 0);   //  *10
   MMCh = preferences_nvs.getUChar("MMC", 0);   //  *10
   Consigne_HG = preferences_nvs.getUChar("C_HG", 0);  //  *10
   HG = preferences_nvs.getUChar("HG", 0);
-  Ballon = preferences_nvs.getUChar("Bal", 0);
   if ((Consigne_G < 130) || (Consigne_G > 220))  // entre 13°C et 22°C
   {
     Serial.println("Raz consigne :  valeur par defaut:15°C");
@@ -343,13 +328,6 @@ void setup_nvs()
     HG = 1;
     preferences_nvs.putUChar("HG", HG);
   }
-  if ((!Ballon) || (Ballon > 2))  // 1:eteint 2:allumé
-  {
-    Serial.println("Raz Ballon : inactif pas défaut");
-    Ballon = 1;
-    preferences_nvs.putUChar("Bal", Ballon);
-    save_modbus(160, 0);
-  }
   if (HG == 2) Consigne = (float)Consigne_HG / 10;
   else Consigne = (float)Consigne_G / 10;
   if ((!MMCh) || (MMCh>2))
@@ -357,9 +335,8 @@ void setup_nvs()
     Serial.println("Raz Chauffage : inactif pas défaut");
     MMCh = 1;
     preferences_nvs.putUChar("MMC", MMCh);
-    save_modbus(158, 0);
   }
-  Serial.printf("Chauf:%i Consigne:%.1f Consigne_G:%i HG:%i Consigne_HG:%i Ballon:%i\n", MMCh, Consigne, Consigne_G, HG, Consigne_HG, Ballon);
+  Serial.printf("Chauf:%i Consigne:%.1f Consigne_G:%i HG:%i Consigne_HG:%i \n", MMCh, Consigne, Consigne_G, HG, Consigne_HG);
 
 
   /*// Initialisation compteur max pour activation radiateur  si 12min
@@ -384,8 +361,8 @@ void setup_nvs()
     Serial.printf("loi_eau_Tint : %.2f\n\r", loi_eau_Tint);
 
   // Initialisation du PID
-  myPID.SetMode(AUTOMATIC);                          // Active le PID
-  myPID.SetOutputLimits(-min_max_pid, min_max_pid);  // Limites de la commande (-10+10)
+  //myPID.SetMode(AUTOMATIC);                          // Active le PID
+  //myPID.SetOutputLimits(-min_max_pid, min_max_pid);  // Limites de la commande (-10+10)
 
 
 }
@@ -395,9 +372,25 @@ void setup_nvs()
 void setup_1()
 {
 
+  // Lire donnees de planning, du STM32
+  Serial1.printf("JCHLTT"); // Lecture de toutes les donnees du STM32
+
+  // emuation absence STM32
+  #ifdef DEBUG
+      plan[0].ch_debut = 42;  //7h
+      plan[0].ch_fin = 60;  // 10h
+      plan[0].ch_type = 0;
+      plan[0].ch_consigne = 185;  // 18,5°
+      plan[0].ch_cons_apres = 165;  // 16,5°
+      plan[1].ch_debut = 96;  //16h
+      plan[1].ch_fin = 120; // 20h
+      plan[1].ch_type = 0; //0
+      plan[1].ch_consigne = 190;  // 19°
+      plan[1].ch_cons_apres = 160; // 16°
+  #endif
 
   // initialisation capteur de température intérieur
-  Tint = 15;
+  /*Tint = 15;
   uint8_t Tint_erreur = 0;
   #ifdef Temp_int_DHT22
     dht[0].begin();
@@ -417,7 +410,7 @@ void setup_1()
     }
     else
       Serial.println("---DHT:signal non stable!");
-  #endif
+  #endif*/
 
   //Serial.println(portTICK_PERIOD_MS);
   //vTaskDelay(10000 / portTICK_PERIOD_MS);
@@ -427,7 +420,7 @@ void setup_1()
 
 
 
-#ifdef Temp_int_DS18B20
+/*#ifdef Temp_int_DS18B20
   ds.begin();  // Startup librairie DS18B20
   nb_capteurs_temp = ds.getDeviceCount();
   Serial.print("Nb Capteurs DS18B20:");
@@ -451,13 +444,13 @@ void setup_1()
     Tint_erreur = 7;
   }
   if (Tint_erreur) log_erreur(Code_erreur_Tint, Tint_erreur, 0);
-
+*/
 }
 
 // apres demarrage reseau
 void setup_2()
 {
-
+  
 }
 
 
@@ -484,9 +477,9 @@ uint8_t requete_Get_appli(const char* var, float *valeur)
     res = 0;
     *valeur = Text;
   }
-  if (strncmp(var, "TPAC",5) == 0) {
+  if (strncmp(var, "Teau",5) == 0) {
     res = 0;
-    *valeur = TPAC;
+    *valeur = Teau;
   }
   if (strncmp(var, "Kp",3) == 0) {
     res = 0;
@@ -506,12 +499,16 @@ uint8_t requete_Get_appli(const char* var, float *valeur)
   }
   if (strncmp(var, "HG",3) == 0) {
     res = 0;
-    *valeur = HG;
+    *valeur = HG-1;
   }
-  if (strncmp(var, "Ballon",7) == 0) {
+  if (strncmp(var, "MarAr",3) == 0) {
+    res = 0;
+    *valeur = ch_arret-1;
+  }
+/*  if (strncmp(var, "Ballon",7) == 0) {
     res = 0;
     *valeur = Ballon;
-  }
+  }*/
   if (strncmp(var, "MMC",4) == 0) {
     res = 0;
     *valeur = MMCh;
@@ -521,7 +518,20 @@ uint8_t requete_Get_appli(const char* var, float *valeur)
     if (cpt_securite)  *valeur=1;
     else *valeur=0;
   }
+  if (var[0] == 'P' && strlen(var) == 4 && var[2] == '_')
+  {
+    uint8_t i = var[1] - '0';
+    uint8_t f = var[3] - '0';
 
+    if (i < NB_MAX_PGM) {
+      if (f == 0) *valeur = plan[i].ch_debut;
+      else if (f == 1) *valeur = plan[i].ch_fin;
+      else if (f == 2) *valeur = plan[i].ch_type;
+      else if (f == 3) *valeur = plan[i].ch_consigne;
+      else if (f == 4) *valeur = plan[i].ch_cons_apres;
+    res=0;
+    }
+  }
   return res;
 }
 
@@ -530,83 +540,112 @@ uint8_t requete_Set_appli (String param, float valf)
 {
   uint8_t res=1;
 
-  if (param == "consigne") 
+  if (cpt_securite)
   {
-    if (HG == 2)  // Hors Gel
+
+    if (param == "consigne")     // Forcage consigne, rajouter duree
     {
-      if ((valf >= 8.0) && (valf <= 16.0))  // 8°C a 16°C
+      if (HG == 2)  // Hors Gel
       {
-        Consigne_HG = round(valf * 10);
-        Consigne = valf;
-        preferences_nvs.putUChar("C_HG", Consigne_HG);
+        if ((valf >= 8.0) && (valf <= 16.0))  // 8°C a 16°C
+        {
+          Consigne_HG = round(valf * 10);
+          Consigne = valf;
+          preferences_nvs.putUChar("C_HG", Consigne_HG);
+          res = 0;
+        }
+      } else if (HG == 1)  // normal
+      {
+        if ((valf >= 13.0) && (valf <= 22.0))  // 13°C à 22°C
+        {
+          Consigne_G = round(valf * 10);
+          Consigne = valf;
+          preferences_nvs.putUChar("Cons", Consigne_G);
+          res = 0;
+        }
+      }
+      //Serial.printf("HG:%i valf:%.1f Consigne:%.1f\n", HG, valf, Consigne);
+    }
+
+    if (param == "MarAr")
+    {
+      res=0;
+      if (valf)  // activation chaudiere
+      {
+        ch_arret = 2;  // chaudiere allumée
+        preferences_nvs.putUChar("MMC", 2);
+        digitalWrite(PIN_Chaudiere, HIGH);  // Activation chaudiere
+        
+      } else {
+        ch_arret = 1;  // chaudiere éteinte
+        preferences_nvs.putUChar("MMC", 1);
+        digitalWrite(PIN_Chaudiere, LOW);   // Désactivation chaudiere
+        
+      }
+    }
+
+    if (param == "HG") 
+    {
+      if (valf)  // activation Hors gel
+      {
+        HG = 2;  // HG
+        Consigne = (float)Consigne_HG / 10;
+        //Ballon = 1;  // ballon eteint
+        //save_modbus(160, 0);
+        preferences_nvs.putUChar("HG", 2);
+        Serial1.printf("JCHEHG1");
+        //preferences_nvs.putUChar("Bal", 1);
+        res = 0;
+      } else {
+        HG = 1;  // mode normal
+        Consigne = (float)Consigne_G / 10;
+        //Ballon = 2;  // ballon allumé
+        //save_modbus(160, 1);
+        preferences_nvs.putUChar("HG", 1);
+        Serial1.printf("JCHEHG0");
+        //preferences_nvs.putUChar("Bal", 2);
         res = 0;
       }
-    } else if (HG == 1)  // normal
+      //Serial.printf("HG:%i valf:%.1f Consigne:%.1f\n", HG, valf, Consigne);
+    } 
+
+
+    // --- Gestion du Planning P0_0 à P2_4 ---
+    if (param.startsWith("P") && param.length() == 4 && param[2] == '_')
     {
-      if ((valf >= 13.0) && (valf <= 22.0))  // 13°C à 22°C
-      {
-        Consigne_G = round(valf * 10);
-        Consigne = valf;
-        preferences_nvs.putUChar("Cons", Consigne_G);
+      uint8_t i = param[1] - '0';
+      uint8_t f = param[3] - '0';
+      uint8_t val = (uint8_t)valf;
+      if (i < NB_MAX_PGM) {
+        if (f == 0) plan[i].ch_debut = val;
+        else if (f == 1) plan[i].ch_fin = val;
+        else if (f == 2) plan[i].ch_type = val;
+        else if (f == 3) plan[i].ch_consigne = val;
+        else if (f == 4) plan[i].ch_cons_apres = val;
+        
+        // Synchronisation avec STM32
+        Serial1.printf("JCHEP%i%02X%02X%i%02X%02X", i, plan[i].ch_debut, plan[i].ch_fin, plan[i].ch_type, plan[i].ch_consigne, plan[i].ch_cons_apres);
         res = 0;
       }
     }
-    //Serial.printf("HG:%i valf:%.1f Consigne:%.1f\n", HG, valf, Consigne);
-  }
-  
-  if (param == "HG") 
-  {
-    if (valf)  // activation Hors gel
-    {
-      HG = 2;  // HG
-      Consigne = (float)Consigne_HG / 10;
-      Ballon = 1;  // ballon eteint
-      save_modbus(160, 0);
-      preferences_nvs.putUChar("HG", 2);
-      preferences_nvs.putUChar("Bal", 1);
-      res = 0;
-    } else {
-      HG = 1;  // mode normal
-      Consigne = (float)Consigne_G / 10;
-      Ballon = 2;  // ballon allumé
-      save_modbus(160, 1);
-      preferences_nvs.putUChar("HG", 1);
-      preferences_nvs.putUChar("Bal", 2);
-      res = 0;
-    }
-    //Serial.printf("HG:%i valf:%.1f Consigne:%.1f\n", HG, valf, Consigne);
-  } 
-  
-  if (param == "Ballon")
-  {
-    res=0;
-    if (valf)  // activation Ballon
-    {
-      Ballon = 2;  // ballon allumé
-      preferences_nvs.putUChar("Bal", 2);
-      save_modbus(160, 1);
-    } else {
-      Ballon = 1;  // ballon éteint
-      preferences_nvs.putUChar("Bal", 1);
-      save_modbus(160, 0);
-    }
-  }
 
-  if (param == "MMC")
-  {
-    res=0;
-    if (valf)  // activation Chauffage
+    if (param == "MMC")
     {
-      MMCh = 2;  // chauffage allumé
-      preferences_nvs.putUChar("MMC", 2);
-      save_modbus(158, 1);
-    } else {
-      MMCh = 1;  // chauffage éteint
-      preferences_nvs.putUChar("MMC", 1);
-      save_modbus(158, 0);
+      res=0;
+      if (valf)  // activation Chauffage
+      {
+        MMCh = 2;  // chauffage allumé
+        preferences_nvs.putUChar("MMC", 2);
+        Serial1.printf("JCHEA1");
+        //save_modbus(158, 1);
+      } else {
+        MMCh = 1;  // chauffage éteint
+        preferences_nvs.putUChar("MMC", 1);
+        Serial1.printf("JCHEA0");
+        //save_modbus(158, 0);
+      }
     }
   }
-
 
   return res;
 }
@@ -619,7 +658,7 @@ uint8_t requete_GetReg_appli(int reg, float *valeur)
   if (reg == 10)  // registre 10 : PID mode : 4
   {
     res = 0;
-    *valeur = mode_pid;
+    *valeur = mode_regul;
   }
   if (reg == 11)  // registre 11 : Teau fixe
   {
@@ -676,20 +715,15 @@ uint8_t requete_GetReg_appli(int reg, float *valeur)
     res = 0;
     *valeur = min_max_pid;
   }
-  if (reg == 23)  // registre 23 : TPAC min
+  if (reg == 23)  // registre 23 : Teau min
   {
     res = 0;
     *valeur = TPacMin;
   }
-  if (reg == 24)  // registre 24 : TPAC max
+  if (reg == 24)  // registre 24 : Teau max
   {
     res = 0;
     *valeur = TPacMax;
-  }
-  if (reg == 25)  // registre 25 : Seuil min Temp evaporation
-  {
-    res = 0;
-    *valeur = ((float)(Seuil_T_Evapo)-300)/10;
   }
 
 
@@ -708,12 +742,12 @@ uint8_t requete_SetReg_appli(int param, float valeurf)
   int16_t valeur = int16_t(valeurf);
   uint8_t res = 1;
 
-  if (param == 10)  // registre 10 : mode_pid : 1, 2, 3
+  if (param == 10)  // registre 10 : mode_regul: 1, 2, 3
   {
     if ((valeur) && (valeur < 4)) {
       res = 0;
-      mode_pid = valeur;
-      preferences_nvs.putUChar("PID", mode_pid);
+      mode_regul = valeur;
+      preferences_nvs.putUChar("REGUL", mode_regul);
     }
   }
 
@@ -723,7 +757,7 @@ uint8_t requete_SetReg_appli(int param, float valeurf)
     if ((valeurf >= 10) && (valeurf <= 30))  // 10 a 30°C
     {
       TRef = valeurf;
-      preferences_nvs.putUShort("TRef", (uint16_t)(valeurf*10));  // enregistrement si reboot , pour le cas de mode_pid=fixe
+      preferences_nvs.putUShort("TRef", (uint16_t)(valeurf*10));  // enregistrement si reboot , pour le cas de mode_regul=fixe
     }
   }
   if (param == 12)  // registre 12 : Kp
@@ -829,14 +863,6 @@ uint8_t requete_SetReg_appli(int param, float valeurf)
     }
   }
 
-  if (param == 25)  // registre 25 : Seuil Temp min Evaporation
-  {
-    if ((valeurf >= -20) && (valeurf <= 10)) {   // -20°C à 0°C
-      res = 0;
-      Seuil_T_Evapo = (uint16_t)(valeurf*10+300);  
-      preferences_nvs.putUShort("TEv", Seuil_T_Evapo);
-    }
-  }
 
   if (param == 30)  // registre 30 : index
   {
@@ -1025,75 +1051,16 @@ uint8_t lecture_Text(float *mesure) {
   return Text_erreur;
 }
 
-// chaque 30 secondes, vérification si le compresseur a changé d'état par rapport à la mesure précédente
-// Si oui, enreg temps cycle arret ou démarrage 
-void event_mesure_compresseur()  // toutes les 30 secondes
+
+
+void event_mesure_temp()  // toutes les 60 minutes : mesure Temp ext par internet
 {
-  int16_t valeur_compr=0;
-  uint8_t etat_compr_new=0;
-  unsigned long millis_comp;
-  uint8_t err = read_modbus(25, &valeur_compr);  // interrogation PAC
-  if (valeur_compr) etat_compr_new=1;
-
-  millis_comp = millis();
-  if (etat_compr != etat_compr_new)  // changement d'état
-  {
-    etat_compr  = etat_compr_new;
-    if (etat_compr)  // demarrage compresseur - actif : fin du cycle arret
-    {
-      milli_marche = millis_comp;  // demarre du cycle marche
-      uint16_t duree_arret = (milli_marche - milli_arret) / 60000;  // en minutes
-      for (uint8_t i = NB_Val_Graph - 1; i; i--)  // graphique des cycles Off
-        graphique[i][4] = graphique[i - 1][4];
-      graphique[0][4] = duree_arret / 4;  // division par 4 du temps d'arret, pour améliorer lisibilité du graphique
-    }
-    else  // arret du compresseur
-    {
-      milli_arret = millis_comp;  // demarre du cycle arret
-      uint16_t duree_marche = (milli_arret - milli_marche) / 60000;  // en minutes
-      for (uint8_t i = NB_Val_Graph - 1; i; i--)   
-      {
-        graphique[i][3] = graphique[i - 1][3];
-        graphique[i][5] = graphique[i - 1][5];
-      }
-      graphique[0][3] = duree_marche;   // graphique des cycles On
-      graphique[0][5] = T_evapo_min;   // graphique des Tem min Evapo
-      T_evapo_min = 700; // 40°C
-    }
-  }
-  else  // pas de changement d'etat
-  {
-    if (etat_compr)  // compresseur en marche
-    {
-      dernier_fct = (millis_comp - milli_marche) / 60000;  // en minutes
-      valeur_compr = 0;
-      err = read_modbus(6, &valeur_compr);  // interrogation Temperature evaporation
-      if ((err) || (valeur_compr<-300) || (valeur_compr>400)) valeur_compr=0;
-      uint16_t T_evap = (uint16_t)(valeur_compr+300);      
-      if (T_evap < T_evapo_min) T_evapo_min = T_evap;  // enregistrement du minimum
-      if (T_evapo_min < Seuil_T_Evapo)
-      {
-        // TODO : Arret de la PAC, avant qu'elle ne se mette en sécurité
-        //save_modbus(158, 0);
-        writeLog('P', 0, (uint8_t)(T_evapo_min>>4),(uint8_t)(T_evapo_min & 0x0F), "Secu_Eva");
-
-        Serial.printf("Arret PAC securite : %i\n\r", T_evapo_min);
-        // Diminution de la consigne : -10°C sur TPac
-        TPAC = TPAC-10;
-        //save_modbus(32, (uint16_t)(TPAC * 10));
-      }
-    }
-    else  // compresseur a l'arret
-    {
-      heure_arret = (millis_comp - milli_arret) / 60000;  // en minutes
-    }
-  }
+// lire le site internet meteo.com
+  Text=15;
 }
 
-
-void event_mesure_temp()  // toutes les 15 minutes
+/*void cycle_pid()
 {
-
   // regulation PAC
   uint8_t i;
 
@@ -1121,7 +1088,7 @@ void event_mesure_temp()  // toutes les 15 minutes
   // en fonction de Tconsigne, Tinterieure,
   Input = Tint;
 
-  if (mode_pid == 1)  // Normal
+  if (mode_regul == 1)  // Normal
   {
     // limitation du PID de 10 à 30. Modifier pour mettre de 15° à 30°/40°
     float minP = (float)min_max_pid;
@@ -1134,11 +1101,11 @@ void event_mesure_temp()  // toutes les 15 minutes
     myPID.Compute();
     // ajout de la loi d'eau dépendant de la temperature exterieure
     TPAC = Output + T_obj;   //(Text-Pt1)/(Pt2-Pt1)*(Pt2Val-Pt1Val)+Pt1Val;
-  } else if (mode_pid == 2)  // Loi d'eau
+  } else if (mode_regul == 2)  // Loi d'eau
   {
     TPAC = T_obj;
     Output = 0;
-  } else if (mode_pid == 3)  // fixe
+  } else if (mode_regul == 3)  // fixe
   {
     Output = 0;  // pas de chgt de TPAC
     TPAC = TRef;
@@ -1148,7 +1115,7 @@ void event_mesure_temp()  // toutes les 15 minutes
     TPAC = 18.0;
   else if (Tint_erreur) {
     TPAC = T_obj;  // pas de régul
-    if (mode_pid == 3) TPAC = TRef;
+    if (mode_regul == 3) TPAC = TRef;
   }
 
   if (TPAC > TPacMax) TPAC = TPacMax;  // Temperature d'eau maximum : 30°C
@@ -1172,8 +1139,8 @@ void event_mesure_temp()  // toutes les 15 minutes
     if (err) TCha = 230;                   // 23° par defaut
     graphique[0][2] = TCha;
     //Serial.printf("Tcha:%i\r\n", TCha);
-    /*if (Mode == 3)
-      graphique[0][2] = radiateur_marche * 50 + 120;  // 12°C ou 17°*/
+    //if (Mode == 3)
+    //  graphique[0][2] = radiateur_marche * 50 + 120;  // 12°C ou 17°
 
     //Serial.printf("Graphique:%i\n", graphique[0][2]);
   }
@@ -1212,7 +1179,7 @@ void event_mesure_temp()  // toutes les 15 minutes
 
     Serial.printf("PID:Consigne:%.1f Obj:%.1f Tint:%.1f PID:%.3f TPAC:%.1f Simu:%.1f sortie:%.1f Text:%.1f\n\r", Consigne, T_obj, Tint, Output, TPAC, Simul_t_ext, sortie_analo, Text);
   }
-
+*/
 
   /*  if (Mode == 2)  // radiateur et PAC
   {
@@ -1260,7 +1227,7 @@ void event_mesure_temp()  // toutes les 15 minutes
       }
     }
   }*/
-}
+//}
 
 float loi_deau(float temp_ext, float temp_cons, float *Tloi) {
   float temp_obj;
