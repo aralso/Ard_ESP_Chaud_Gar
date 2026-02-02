@@ -2,7 +2,8 @@
 
 TODO : 
 
-v1.2 12/2025 modif site web, compil ok
+v1.3 02/2026 OTA, ajout esp32_thermometre, mesure Text par internet
+v1.2 12/2025 1ere version ops, modif site web, compil ok
 v1.1 12/2025 copie de PAC_Catalane v1.16
 
 Interrogation des données par la liaison série (recep_message) : 2-1 (type1, reg1)
@@ -22,9 +23,16 @@ Configuration des options de programmation :
 - usb mode : hardware cdc & jtag (usage basique)
 */
 
+//#define ESP_CHAUDIERE      // Rôle principal : gestion de la chaudière
+#define ESP_THERMOMETRE  // Rôle distant : sonde de température
+
 // Hardware
 //#define MODE_WT32  // WT32-Eth01 sinon ESP32-CAM ou DOIT ESP32 Devkit V1
- #define ESP32_v1    // DOIT ESP32 DEVKIt V1  sinon ESP32_S3
+#define ESP32_v1    // DOIT ESP32 DEVKIt V1  sinon ESP32_S3
+
+//#define Temp_int_DHT22
+//#define Temp_int_DS18B20
+#define Temp_int_HDC1080  // Capteur I2C HDC1080
 
 // Réseau
 //#define NO_RESEAU
@@ -35,7 +43,7 @@ Configuration des options de programmation :
 #define DEBUG  // mode station, pas de websocket, pas de sécurite, emulation valeurs STM32
 
 //#define WatchDog
-#define STM32  //incompatible du modbus, sauf à changer les pin
+//#define STM32  //incompatible du modbus, sauf à changer les pin
 
 
 #ifdef DEBUG   // debug
@@ -47,14 +55,18 @@ Configuration des options de programmation :
 
 
 #define DELAI_PING  180  // en secondes, pour le websocket
-#define Version "V1.2"
+#define Version "V1.3"
+
+#define IP_CHAUDIERE "192.168.251.31" // Adresse IP de l'ESP Chaudière
+#define LATITUDE "48.8461"
+#define LONGITUDE "2.1889"
 
 #define DEBUG_ETHERNET_WEBSERVER_PORT Serial
 
 // Debug Level from 0 to 4
-#define _ETHERNET_WEBSERVER_LOGLEVEL_ 3
+#define _ETHERNET_WEBSERVER_LOGLEVEL_ 1
 
-#define temps_boucle_loop  60   // secondes
+#define temps_boucle_loop  1   // secondes
 #define attente_init     10     // 10 secondes avant de demasquer les entrées
 #define attente_mise_heure  30  // 30 secondes apres le temps d'init ci-dessus pour verifier/maj l'heure
 
@@ -72,6 +84,10 @@ static bool eth_connected = false;
 #include "site_web.h"
 #include "time.h"
 #include <base64.h>  // Nécessaire pour encoder les données binaires
+#include <ArduinoOTA.h>
+#include <HTTPClient.h>
+#include <Wire.h>
+#include "ClosedCube_HDC1080.h"
 
 // Suppression des warnings de fonctions non utilisées pour ModbusMaster
 /*#pragma GCC diagnostic push
@@ -99,6 +115,8 @@ extern "C" {
 }
 
 #include "variables.h"
+#include "esp_pm.h"
+#include "esp_wifi.h"
 
 uint8_t err_wifi_repet;  // permet de resetter si le wifi ne se rétablit pas au bout de 4 jours
 
@@ -128,7 +146,7 @@ char buffer_dmp[MAX_DUMP];  // max 250 logs, 16 octets chacun
   // Adresse IP pour le wifi_station (en mode debug)
   const char *ssid = "garches";               // Enter SSID du Routeur Wifi : garches:garches  kerners:kerners catalane:catalane  Theoule:SFR_EFF0
   const char *password = "196492380";    //Enter Password here
-  IPAddress Slocal_ip(192, 168, 251, 31);  // Définir l'adresse IP statique souhaitée Garches:251.50 Catalane:248.5
+  IPAddress Slocal_ip(192, 168, 251, 50);  // Définir l'adresse IP statique souhaitée Garches:251.50 Catalane:248.5
   IPAddress Sgateway(192, 168, 251, 1);   // Définir la passerelle (généralement l'adresse du routeur)
   IPAddress Ssubnet(255, 255, 255, 0);    // Masque de sous-réseau
   IPAddress SprimaryDNS(8, 8, 8, 8);      // DNS Primaire (Google DNS)
@@ -170,12 +188,10 @@ uint16_t test2=0;
 uint8_t systeme_marche=0;
 
 uint8_t mode_reseau=13;  //  0:pas de reseau 11:wifi_AP_usine  12:wifi_AP   13:wifi_routeur  14:Ethernet filaire 
-#ifdef NO_RESEAU
-  mode_reseau=0;
-#endif
 
 char nom_routeur[16]="";
 char mdp_routeur[16]="";
+unsigned long last_remote_temp_time = 0;
 
 int16_t  graphique [NB_Val_Graph][NB_Graphique];
 
@@ -283,8 +299,9 @@ uint8_t etat_connect_ethernet = 0;
 
 AsyncWebServer server(80);
 
-uint8_t cycle24h,  temp_moy24h;
-
+uint8_t cycle24h;
+float  tempI_moy24h, tempE_moy24h;
+uint8_t cpt24_Tint, cpt24_Text;
 
 #define DEBOUNCE_INTERVAL 300  // Temps anti-rebond en ms
 #define VALIDATION_COUNT 10  // Nombre de lectures consécutives pour valider un changement
@@ -656,7 +673,7 @@ void taskHandler(void *parameter) {
       Serial.printf("enreg wdt taskhandler : %i\n\r", status);
     #endif
 
-    Serial.printf("Taskhandler : coeur %d\n", xPortGetCoreID());
+    Serial.printf("Taskhandler : coeur %d\n\r", xPortGetCoreID());
 
     while (true) {
         // Attendre un 2 événement (bloque tant qu'il n'y a rien)
@@ -839,34 +856,34 @@ void taskHandler(void *parameter) {
 
                   // Log toutes les 24 heures : nb d'erreurs wifi et temp moyenne
                   if (nb_err_reseau>255) nb_err_reseau=255;
-                  cycle24h=0;
-                  temp_moy24h=0;
-
-                  UartMessage_t uartMsg1; // Variable pour stocker la réponse
-                  // 1. Vider les anciens messages résiduels dans la queue (sécurité)
-                  while (xQueueReceive(QueueUart1, &uartMsg1, 0)); 
-                  // 2. Envoyer la demande au STM32
-                  Serial1.printf("JCHL24");
-                  // 3. Attendre la réponse pendant 2 secondes max (bloquant pour la tâche Appli)
-                  if (xQueueReceive(QueueUart1, &uartMsg1, pdMS_TO_TICKS(2000)) == pdTRUE)
-                  {
-                      // La réponse est arrivée !
-                      Serial.printf("Réponse JCHL reçue : %s\n", uartMsg1.msg);
-                      // Exemple de parsing (à adapter selon le format exact envoyé par le STM32)
-                      sscanf(uartMsg1.msg, "ICHL:%hhu:%hhu", &cycle24h, &temp_moy24h);
-                  } else {
-                      // Timeout
-                      Serial.println("Erreur : Pas de réponse STM32 après 2s");
-                  }
-
-                  writeLog('K', cycle24h,  temp_moy24h, (uint8_t)nb_err_reseau, "24H");
+                  writeLog('K', 0, 0, (uint8_t)nb_err_reseau, "24H_Res");
                   nb_err_reseau=0;
+
+                  uint8_t tempI = (uint8_t)(tempI_moy24h/cpt24_Tint*10);
+                  uint8_t tempE = (uint8_t)(tempE_moy24h/cpt24_Text*10);
+
+                  writeLog('K', cpt24_Tint,  tempI, tempE, "24H_Temp");
+                  tempI_moy24h=0;
+                  tempE_moy24h=0;
+                  cpt24_Tint=0;
+                  cpt24_Text=0;
 
                   break;
                 }
 
                 case EVENT_CYCLE:
                   event_mesure_temp();
+                  #ifdef ESP_CHAUDIERE
+                    // Sécurité : si aucune température reçue depuis 1h10 (4200s)
+                    if (millis() - last_remote_temp_time > 4200000)
+                    {
+                      if (HG != 1) {
+                        HG = 1; // Mode Hors Gel
+                        Serial.println("Sécurité : Pas de température reçue depuis 1h10. Passage en mode HORS-GEL.");
+                        writeLog('S', 0, 0, 0, "Secu HG");
+                      }
+                    }
+                  #endif
                   break;
 
                 case EVENT_CYCLE_Compresseur:
@@ -877,7 +894,7 @@ void taskHandler(void *parameter) {
 
 
                 default:
-                    Serial.println(">> Événement inconnu !");
+                    Serial.println("evenement inconnu !");
                     break;
             } // fin du case
             if (erreur_queue) {
@@ -903,6 +920,7 @@ void taskHandler(void *parameter) {
 
 void setup()
 {
+  
   delay(2000);
   // Cause reset :
   resetReason0 = (uint8_t) esp_reset_reason();
@@ -910,6 +928,17 @@ void setup()
   resetREASON0[sizeof(resetREASON0) - 1] = '\0'; // Garantit la terminaison null
 
   Serial.begin(115200);
+
+  // Optimisation processeur : autorise le processeur à s'arrêter si inactif
+  esp_pm_config_esp32_t pm_config = {
+      .max_freq_mhz = 80,
+      .min_freq_mhz = 10,
+      .light_sleep_enable = true
+  };
+  //esp_pm_configure(&pm_config);
+
+  // Optimisation consommation : arrêt Bluetooth
+  btStop();
 
   //source_reveil=esp_sleep_get_wakeup_cause();
 
@@ -954,6 +983,7 @@ void setup()
 
   heure_arret=0;
   dernier_fct=0;
+  last_remote_temp_time = millis();
 
   Serial.println(" ");
   Serial.print("Initialisation - reset:");
@@ -1048,6 +1078,10 @@ void setup()
     Serial.printf("Raz mode reseau Wifi AP : val par defaut 11\n\r");
   }
   else Serial.printf("mode reseau : %i\n\r", mode_reseau);
+
+  #ifdef NO_RESEAU
+    mode_reseau=0;
+  #endif
 
   // delai écoute websocket
   DelaiWebsocket = preferences_nvs.getUChar("DelWS", 0);  // en secondes
@@ -1266,17 +1300,12 @@ void setup()
 
   setup_1();
 
-  /*delay(1000);
-  Serial.println("AAA");
-  lect_tint();
-  delay(1000);*/
-
-  //  while (!Serial && (millis() < 1000))  // attend que le port série soit pret , limité à 1 seconde
-  //    ;
 
   // -------------------- demarrage du reseau
 
   Serial.printf("mode reseau avant wifi:%i\n\r", mode_reseau);
+
+  #ifndef NO_RESEAU 
 
   #ifdef MODE_Wifi
     #ifdef DEBUG
@@ -1323,7 +1352,11 @@ void setup()
         etat_connect_ethernet = 2;
         eth_connected = true;
       }
-      if (WiFi.status() == WL_CONNECTED) Serial.println("Wifi OK");
+      if (WiFi.status() == WL_CONNECTED) {
+        Serial.println("Wifi OK");
+        // Optimisation consommation : activation du Modem Sleep
+        //WiFi.setSleep(true);
+      }
       else Serial.println("Wifi pas ok");
     }
 
@@ -1345,54 +1378,38 @@ void setup()
       etat_connect_ethernet = 2;
     } else
       Serial.println("pas connecté Ethernet");
-  #endif
+  #endif // wifi
+  #endif // No_reseau
 
   printMemoryStatus();
   delay(100);
 
-  /*delay(1000);
-  Serial.println("BBB");
-  lect_tint();
-  delay(1000);*/
 
   uint16_t Cpu_freq = getCpuFrequencyMhz();
   setCpuFrequencyMhz(80);
   Serial.printf("CPU Freq: avant:%i  apres:%u\n", Cpu_freq, (unsigned int)getCpuFrequencyMhz());
 
-  /*delay(1000);
-  Serial.println("BBC");
-  lect_tint();
-  delay(1000);*/
 
-  // On configure le seveur NTP
+  // On configure le serveur NTP
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
 
-  /*delay(1000);
-  Serial.println("BBD");
-  lect_tint();
-  delay(1000);*/
 
   //uint8_t clock = ledcGetClockSource();  // pour pwm
   //Serial.printf("clock:%i\n\r",clock);  // Clock=11
 
-
-  setupRoutes();
-
-  server.begin();
-
-  /*delay(1000);
-  Serial.println("CCC");
-  lect_tint();
-  delay(1000);*/
+  #ifndef NO_RESEAU
+    setupRoutes();
+    server.begin();
 
 
-  #ifdef MODE_Wifi
+    #ifdef MODE_Wifi
 
-  #else
-    Serial.print(F("HTTP EthernetWebServer is @ IP : "));
-    Serial.println(ETH.localIP());
-  #endif
+    #else
+      Serial.print(F("HTTP EthernetWebServer is @ IP : "));
+      Serial.println(ETH.localIP());
+    #endif
 
+  #endif // No_reseau
 
   #ifdef WatchDog
     esp_task_wdt_reset();
@@ -1410,16 +1427,44 @@ void setup()
   printMemoryStatus();
 
   //setup_2();
+// Configuration OTA
+// --- OTA ---
+  ArduinoOTA.setHostname("ESP32S3");
+  ArduinoOTA.setPassword("Corail2025");
+
+
+
+  ArduinoOTA.onStart([]() {
+    String type;
+    if (ArduinoOTA.getCommand() == U_FLASH) type = "sketch";
+    else type = "filesystem";
+    Serial.println("Mise à jour OTA: " + type);
+  });
+
+  ArduinoOTA.onEnd([]() {
+    Serial.println("\nFin");
+  });
+
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    Serial.printf("Progression: %u%%\r", (progress / (total / 100)));
+  });
+
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.printf("Erreur[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+    else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+    else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+    else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+    else if (error == OTA_END_ERROR) Serial.println("End Failed");
+  });
+
+  ArduinoOTA.begin();
+  Serial.println("OTA prêt");
 
 
   Serial.println("fin setup:");
 
   esp_task_wdt_delete(NULL); // desinscription de la tache setup/loop de la surveillance watchdog : permet d'éviter le reset_wdt dans la tache loop
-
-  /*delay(1000);
-  Serial.println("DDD");
-  lect_tint();
-  delay(1000);*/
 
 }
 
@@ -2554,7 +2599,7 @@ void requete_status(char *json_response, uint8_t socket, uint8_t type)
   static bool lecture_en_cours = false;
   static unsigned long derniere_lecture = 0;
   
-  // Attendre au moins 2 secondes entre les lectures DHT22
+  // Attendre au moins 2 secondes
   if (millis() - derniere_lecture < DHT22_MIN_INTERVAL_MS) {
     // Utiliser la dernière valeur lue si trop fréquent
     // Tint reste inchangée
@@ -2565,7 +2610,8 @@ void requete_status(char *json_response, uint8_t socket, uint8_t type)
       lecture_en_cours = true;
       derniere_lecture = millis();
       
-      uint8_t Tint_erreur = lecture_Tint(&Tint);
+      uint8_t Tint_erreur=0;
+      //Tint_erreur = lecture_Tint(&Tint);
       
       if (Tint_erreur) {
         log_erreur(Code_erreur_Tint, Tint_erreur,0);
@@ -2576,7 +2622,8 @@ void requete_status(char *json_response, uint8_t socket, uint8_t type)
     }
   }
   
-  uint8_t Text_erreur = lecture_Text(&Text);
+  uint8_t Text_erreur=0;
+  //Text_erreur = lecture_Text(&Text);
   if (Text_erreur) Text = 15;
 
   int sec = millis() / 1000;  // 65000
@@ -2663,7 +2710,8 @@ void requete_status(char *json_response, uint8_t socket, uint8_t type)
   p += sprintf(p, "\"DerFin\":%i,", heure_arret);
   p += sprintf(p, "\"ForD\":%i,", forcage_duree);
   p += sprintf(p, "\"ForC\":%i,", forcage_consigne);
-  p += sprintf(p, "\"MarAr\":%i,", ch_arret-1);
+  p += sprintf(p, "\"MMC\":%i,", MMCh-1);
+
   /*#ifdef MODBUS
   p += sprintf(p, "\"TEx\":%.1f,", TEx);
   p += sprintf(p, "\"TEx1\":%.1f,", TEx1);
@@ -3082,10 +3130,10 @@ void checkPartitions()
   #ifdef DEBUG
     Serial.println("Table des partitions:");
 
-    esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, NULL);
+    esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY, NULL);
     while (it != NULL) {
         const esp_partition_t *p = esp_partition_get(it);
-        Serial.printf("Nom: %s, Taille: %lu octets, Adresse: 0x%lX\n", p->label, p->size, p->address);
+        Serial.printf("Type: %02X, Sous-type: %02X, Nom: %s, Taille: %lu octets, Adresse: 0x%lX\n", p->type, p->subtype, p->label, p->size, p->address);
         it = esp_partition_next(it);
     }
   #endif
@@ -3367,10 +3415,13 @@ void init_time_ps()
 void loop()
 {
     //esp_task_wdt_reset();
-  heap_caps_check_integrity_all(true);  // place ce test dans ton loop()
+  //heap_caps_check_integrity_all(true);  // place ce test dans ton loop()
 
-  Serial.printf("loop - secu:%d\n\r", cpt_securite);
-  vTaskDelay(temps_boucle_loop*1000 / portTICK_PERIOD_MS); // Petite pause
+  ArduinoOTA.handle();
+
+  //Serial.printf("loop - secu:%d\n\r", cpt_securite);
+  //vTaskDelay(temps_boucle_loop*1000 / portTICK_PERIOD_MS); // Petite pause
+  vTaskDelay(30 / portTICK_PERIOD_MS); // Petite pause
 
 }
 
@@ -3465,6 +3516,8 @@ uint8_t reConnectWifi()
     Serial.println("\n[WiFi] Reconnecté !");
     Serial.print("[WiFi] Adresse IP : ");
     Serial.println(WiFi.localIP());
+    // Optimisation consommation : activation du Modem Sleep après reconnexion
+    //WiFi.setSleep(true);
   } else
   {
     Serial.println("\n[WiFi] Échec de reconnexion.");
@@ -3933,6 +3986,8 @@ uint8_t connectWiFiWithDiagnostic() {
     Serial.printf("   - Masque: %s\n", WiFi.subnetMask().toString().c_str());
     Serial.printf("   - Gateway: %s\n", WiFi.gatewayIP().toString().c_str());
     Serial.printf("   - DNS: %s\n", WiFi.dnsIP().toString().c_str());
+    // Optimisation consommation : activation du Modem Sleep
+    //WiFi.setSleep(true);
     return 0;
   } else {
     Serial.println("❌ ÉCHEC de connexion WiFi");

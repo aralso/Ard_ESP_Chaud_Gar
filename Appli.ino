@@ -19,7 +19,8 @@ uint8_t mode_regul;
 planning_t plan[NB_MAX_PGM];
 uint16_t forcage_duree;
 uint8_t forcage_consigne;
-uint8_t ch_arret;
+uint8_t ch_arret, chaudiere;
+unsigned long last_chaudiere_change = 0;
 
 PID myPID(&Input, &Output, &Consigne, Kp, Ki, Kd, DIRECT);
 
@@ -37,6 +38,9 @@ PID myPID(&Input, &Output, &Consigne, Kp, Ki, Kd, DIRECT);
 DHT dht[] = {
   { PIN_Tint22, DHT22 },
 };
+#ifdef Temp_int_HDC1080
+  ClosedCube_HDC1080 hdc1080;
+#endif
 
 // Temperature intérieure
 float Tint;
@@ -156,6 +160,11 @@ void setup_nvs()
     Serial.printf("Raz periode cycle : val par defaut %imin\n\r", periode_cycle);
   }
   else Serial.printf("periode cycle : %imin\n", periode_cycle);
+
+  #ifdef ESP_THERMOMETRE
+    periode_cycle = 30; // Force 30 minutes pour l'envoi de température
+    Serial.println("Mode Thermomètre : cycle forcé à 30 min");
+  #endif
 
   mode_rapide = preferences_nvs.getUChar("Rap", 0);  // mode=12 => mode_rapide
   if ((mode_rapide) && (mode_rapide != 12)) {
@@ -330,6 +339,7 @@ void setup_nvs()
   }
   if (HG == 2) Consigne = (float)Consigne_HG / 10;
   else Consigne = (float)Consigne_G / 10;
+
   if ((!MMCh) || (MMCh>2))
   {
     Serial.println("Raz Chauffage : inactif pas défaut");
@@ -390,61 +400,53 @@ void setup_1()
   #endif
 
   // initialisation capteur de température intérieur
-  /*Tint = 15;
-  uint8_t Tint_erreur = 0;
-  #ifdef Temp_int_DHT22
-    dht[0].begin();
-
-    if (digitalRead(PIN_Tint22) == HIGH || digitalRead(PIN_Tint22) == LOW)
-    {
-      Tint = dht[0].readTemperature();
-      Tint=10;
-      if (isnan(Tint))
-      {
-        Tint = 20.0;
-        Tint_erreur = 6;
-        Serial.println("---DHT:non numérique");
+  #ifdef ESP_THERMOMETRE
+    Tint = 15;
+    #ifdef Temp_int_DHT22
+      dht[0].begin();
+    #endif
+ 
+    #ifdef Temp_int_HDC1080
+      Wire.begin(21, 22); // Forçage des pins SDA=21, SCL=22 pour ESP32 DevKit V1
+      
+      Serial.println("Scanning I2C...");
+      byte error, address;
+      int nDevices = 0;
+      for(address = 1; address < 127; address++ ) {
+        Wire.beginTransmission(address);
+        error = Wire.endTransmission();
+        if (error == 0) {
+          Serial.printf("Device I2C trouvé à l'adresse 0x%02X\n", address);
+          nDevices++;
+        }
       }
-      else
-        Serial.printf("lecture dht22 ok : %.2f\n\r", Tint);
+      if (nDevices == 0) Serial.println("ERREUR : Aucun device I2C détecté !");
+      
+      hdc1080.begin(0x40);
+    #endif
+ 
+    #ifdef Temp_int_DS18B20
+      ds.begin();  // Startup librairie DS18B20
+      nb_capteurs_temp = ds.getDeviceCount();
+      Serial.print("Nb Capteurs DS18B20:");
+      Serial.println(nb_capteurs_temp);
+      if (nb_capteurs_temp > 1) nb_capteurs_temp = 1;
+      int j;
+      for (j = 0; j < nb_capteurs_temp; j++) {
+        Serial.print(" Capteur :");
+        ds.getAddress(Thermometer[j], j);
+        printAddress(Thermometer[j]);
+      }
+    #endif
+
+    // lecture initiale temperature interieure
+    uint8_t Tint_err = lecture_Tint(&Tint);
+    if ((Tint < 1) || (Tint > 45)) {
+      Tint = 20.0;
+      Tint_err = 7;
     }
-    else
-      Serial.println("---DHT:signal non stable!");
-  #endif*/
-
-  //Serial.println(portTICK_PERIOD_MS);
-  //vTaskDelay(10000 / portTICK_PERIOD_MS);
-  //lect_tint();
-  //vTaskDelay(1000 / portTICK_PERIOD_MS);
-
-
-
-
-/*#ifdef Temp_int_DS18B20
-  ds.begin();  // Startup librairie DS18B20
-  nb_capteurs_temp = ds.getDeviceCount();
-  Serial.print("Nb Capteurs DS18B20:");
-  Serial.println(nb_capteurs_temp);
-  if (nb_capteurs_temp > 1) nb_capteurs_temp = 1;
-  int j;
-  for (j = 0; j < nb_capteurs_temp; j++) {
-    Serial.print(" Capteur :");
-    ds.getAddress(Thermometer[j], j);
-    printAddress(Thermometer[j]);
-  }
-
-  ds.requestTemperatures();  // lecture temperature interieure initiale
-  for (j = 0; j < nb_capteurs_temp; j++) {
-    Tint = ds.getTempCByIndex(j);
-  }
-#endif
-
-  if ((Tint < 1) || (Tint > 45)) {
-    Tint = 20.0;
-    Tint_erreur = 7;
-  }
-  if (Tint_erreur) log_erreur(Code_erreur_Tint, Tint_erreur, 0);
-*/
+    if (Tint_err) log_erreur(Code_erreur_Tint, Tint_err, 0);
+  #endif
 }
 
 // apres demarrage reseau
@@ -501,17 +503,13 @@ uint8_t requete_Get_appli(const char* var, float *valeur)
     res = 0;
     *valeur = HG-1;
   }
-  if (strncmp(var, "MarAr",3) == 0) {
-    res = 0;
-    *valeur = ch_arret-1;
-  }
 /*  if (strncmp(var, "Ballon",7) == 0) {
     res = 0;
     *valeur = Ballon;
   }*/
   if (strncmp(var, "MMC",4) == 0) {
     res = 0;
-    *valeur = MMCh;
+    *valeur = MMCh-1;
   }
   if (strncmp(var, "codeR_pac",10) == 0) {
     res = 0;
@@ -542,7 +540,6 @@ uint8_t requete_Set_appli (String param, float valf)
 
   if (cpt_securite)
   {
-
     if (param == "consigne")     // Forcage consigne, rajouter duree
     {
       if (HG == 2)  // Hors Gel
@@ -564,25 +561,17 @@ uint8_t requete_Set_appli (String param, float valf)
           res = 0;
         }
       }
-      //Serial.printf("HG:%i valf:%.1f Consigne:%.1f\n", HG, valf, Consigne);
     }
 
-    if (param == "MarAr")
-    {
-      res=0;
-      if (valf)  // activation chaudiere
-      {
-        ch_arret = 2;  // chaudiere allumée
-        preferences_nvs.putUChar("MMC", 2);
-        digitalWrite(PIN_Chaudiere, HIGH);  // Activation chaudiere
-        
-      } else {
-        ch_arret = 1;  // chaudiere éteinte
-        preferences_nvs.putUChar("MMC", 1);
-        digitalWrite(PIN_Chaudiere, LOW);   // Désactivation chaudiere
-        
-      }
+    if (param == "RTint") {
+      res = 0;
+      Tint = valf;
+      last_remote_temp_time = millis();
+      cpt24_Tint++;
+      tempI_moy24h += Tint;
+      Serial.printf("Réception RTint : %.2f°C\n", Tint);
     }
+
 
     if (param == "HG") 
     {
@@ -631,18 +620,22 @@ uint8_t requete_Set_appli (String param, float valf)
 
     if (param == "MMC")
     {
-      res=0;
-      if (valf)  // activation Chauffage
+      unsigned long mil_tmp = millis();
+      if (mil_tmp - last_chaudiere_change > 20000)  // min 20s
       {
-        MMCh = 2;  // chauffage allumé
-        preferences_nvs.putUChar("MMC", 2);
-        Serial1.printf("JCHEA1");
-        //save_modbus(158, 1);
-      } else {
-        MMCh = 1;  // chauffage éteint
-        preferences_nvs.putUChar("MMC", 1);
-        Serial1.printf("JCHEA0");
-        //save_modbus(158, 0);
+        if (valf==1)  // activation chaudiere
+        {
+          res=0;
+          MMCh = 2;  // chaudiere active
+          preferences_nvs.putUChar("MMC", 2);
+        }
+        if (valf==0)  // arret chaudiere
+        {
+          res=0;
+          MMCh = 1;  // chaudiere éteinte
+          preferences_nvs.putUChar("MMC", 1);
+        }
+        if (res==0)       last_chaudiere_change = mil_tmp;
       }
     }
   }
@@ -942,79 +935,61 @@ if (strcmp(reg, "Test2") == 0)
 }
 
 
-// mesure temperature interieure
-// erreur :0:ok sinon erreur 4:10erreurs succ, 11 à 20 : x erreurs succ
-uint8_t lecture_Tint(float *mesure) {
-  uint8_t Tint_err = 7;
+// erreur :0:ok  sinon erreur 2 à 7
+uint8_t lecture_Tint(float *mesure)
+{
+  uint8_t Tint_erreur = 7;
   float valeur = 20;
 
-  #ifdef Temp_int_DHT22
-    uint8_t pas_valid=0;
-    uint8_t repet=8;
-    while (repet)
-    {
-      
-      // Timeout de sécurité pour éviter le plantage
-      unsigned long startTime = millis();
+  #ifdef ESP_THERMOMETRE
+
+    #ifdef Temp_int_DHT22
+      //dht[0].begin();
+
       if (digitalRead(PIN_Tint22) == HIGH || digitalRead(PIN_Tint22) == LOW)
       {
-        portDISABLE_INTERRUPTS();
-        valeur = dht[0].readTemperature();
-        //valeur = 10;
-        portENABLE_INTERRUPTS();
-        if (isnan(valeur)) pas_valid=4;  // non numérique
+        valeur =  dht[0].readTemperature();
+        if (isnan(valeur))
+        {
+          valeur = 20.0;
+          Tint_erreur = 6;
+          Serial.println("---DHT:non numérique");
+        }
         else
         {
-          if (valeur == -127) pas_valid = 1;
-          if (valeur > 50) pas_valid = 2;
-          if (valeur < -20) pas_valid = 3;
-        }
-        if (pas_valid)  // erreur
-        {
-          vTaskDelay(500 / portTICK_PERIOD_MS); // Petite pause
-          Tint_err = pas_valid;
-          repet--;
-          Serial.printf("DHT22: Erreur de lecture %d, tentative %d\n", pas_valid, repet);
-        }
-        else // ok
-        {
-          Tint_err=0;
-          if (repet !=8)  // au moins une erreur de lecture
-            Tint_err = repet+10;
-          repet=0;
-          Serial.printf("DHT22: Lecture réussie: %.1f°C repet:%i\n", valeur, repet);
+          Tint_erreur=0;
         }
       }
       else
-      {
-        Tint_err = 5;
         Serial.println("---DHT:signal non stable!");
-      }
+    #endif
 
-      
-      // Vérifier le timeout
-      if (millis() - startTime > DHT22_TIMEOUT_MS) { // Utiliser la constante définie
-        Tint_err = 6; // Code d'erreur pour timeout
-        repet = 0;
-        Serial.println("DHT22: Timeout de lecture détecté");
+    #ifdef Temp_int_HDC1080
+      valeur = hdc1080.readTemperature();
+      if (isnan(valeur)) {
+        valeur = 20.0;
+        Tint_erreur = 4;
+      } else {
+        Tint_erreur=0;
       }
+    #endif
 
-      //repet=0;  // 1 seule occurence
-    }
+    #ifdef Temp_int_DS18B20
+      ds.requestTemperatures();
+      valeur = ds.getTempCByIndex(0);
+      Tint_erreur=0;
+    #endif
 
   #endif
 
-  #ifdef Temp_int_DS18B20
-    ds.requestTemperatures();
-    valeur = ds.getTempCByIndex(0);
-  #endif
-
-  /*if (valeur == -127) Tint_err = 1;
-  if (valeur > 50) Tint_err = 2;
-  if (valeur < -20) Tint_err = 3;*/
+  if (valeur > 50) Tint_erreur = 2;
+  if (valeur < -20) Tint_erreur = 3;
+  Serial.printf("lecture Tint : %.2f Err:%i\n\r", valeur, Tint_erreur);
   *mesure = valeur;
-  return Tint_err;
+  return Tint_erreur;
 }
+
+
 
 //mesure temperature exterieure
 uint8_t lecture_Text(float *mesure) {
@@ -1053,181 +1028,114 @@ uint8_t lecture_Text(float *mesure) {
 
 
 
-void event_mesure_temp()  // toutes les 60 minutes : mesure Temp ext par internet
-{
-// lire le site internet meteo.com
-  Text=15;
+void fetch_internet_temp() {
+  HTTPClient http;
+  String url = "http://api.open-meteo.com/v1/forecast?latitude=" LATITUDE "&longitude=" LONGITUDE "&current=temperature_2m";
+  
+  if (http.begin(url)) {
+    int httpCode = http.GET();
+    if (httpCode == 200) {
+      String payload = http.getString();
+      DynamicJsonDocument doc(512);
+      DeserializationError error = deserializeJson(doc, payload);
+      
+      if (!error) {
+        float temp = doc["current"]["temperature_2m"];
+        if (temp > -50.0 && temp < 60.0) {
+          Text = temp;
+          Serial.printf("Météo Garches : %.1f°C\n", Text);
+          cpt24_Text++;
+          tempE_moy24h += Text;
+        }
+      } else {
+        Serial.printf("Erreur parsing JSON Météo : %s\n", error.c_str());
+      }
+    } else {
+      Serial.printf("Erreur HTTP Météo (%d) : %s\n", httpCode, http.errorToString(httpCode).c_str());
+    }
+    http.end();
+  }
 }
 
-/*void cycle_pid()
+void event_mesure_temp()  // toutes les 15 minutes : modif allumage chaudiere
 {
-  // regulation PAC
   uint8_t i;
 
-  // mesure temperature interieure
-  uint8_t Tint_erreur = lecture_Tint(&Tint);
-  if (Tint_erreur) {
-    log_erreur(Code_erreur_Tint, Tint_erreur,0);
-    if (Tint_erreur < 10)
-      Tint = 20;
-  }
-
-  // mesure température exterieure
-  Text = 20;
-  uint8_t Text_erreur;
-  Text_erreur = lecture_Text(&Text);
-  if (Text_erreur) {
-    log_erreur(Code_erreur_Text, Text_erreur,0);
-    Text = 20;
-  }
-
-  // Calcul de la température PAC moyenne en fonction de la loi d'eau sur la Temp ext
-  T_obj = loi_deau(Text, (float)Consigne, &T_loi_eau);
-
-  // calcul temperature eau PAC  - PID
-  // en fonction de Tconsigne, Tinterieure,
-  Input = Tint;
-
-  if (mode_regul == 1)  // Normal
-  {
-    // limitation du PID de 10 à 30. Modifier pour mettre de 15° à 30°/40°
-    float minP = (float)min_max_pid;
-    if (T_obj - (float)TPacMin < minP) minP = T_obj - (float)TPacMin;  // 11.7 -10  < 5   => minP=1.7
-    float maxP = (float)min_max_pid;
-    if ((float)TPacMax - T_obj < maxP) maxP = (float)TPacMax - T_obj;
-    myPID.SetOutputLimits(-minP, maxP);  // Limites de la commande (min_max_pid, 10, 30)
-    Serial.printf("Min:%.1f  Max:%1.f \n\r", minP, maxP);
-
-    myPID.Compute();
-    // ajout de la loi d'eau dépendant de la temperature exterieure
-    TPAC = Output + T_obj;   //(Text-Pt1)/(Pt2-Pt1)*(Pt2Val-Pt1Val)+Pt1Val;
-  } else if (mode_regul == 2)  // Loi d'eau
-  {
-    TPAC = T_obj;
-    Output = 0;
-  } else if (mode_regul == 3)  // fixe
-  {
-    Output = 0;  // pas de chgt de TPAC
-    TPAC = TRef;
-  }
-
-  if ((Text_erreur) && (Tint_erreur))  // Tpac = 18°C
-    TPAC = 18.0;
-  else if (Tint_erreur) {
-    TPAC = T_obj;  // pas de régul
-    if (mode_regul == 3) TPAC = TRef;
-  }
-
-  if (TPAC > TPacMax) TPAC = TPacMax;  // Temperature d'eau maximum : 30°C
-  if (TPAC < TPacMin) TPAC = TPacMin;  // min:10°C
-
-  //Serial.printf("out PID : Tpac:%.2f Output:%.2f\n", TPAC, Output);
-  compteur_graph++;
-  if (compteur_graph >= skip_graph)  // 1 valeur sur x
-  {
-    compteur_graph = 0;
-    for (i = NB_Val_Graph - 1; i; i--) {
-      graphique[i][0] = graphique[i - 1][0];
-      graphique[i][1] = graphique[i - 1][1];
-      graphique[i][2] = graphique[i - 1][2];
-    }
-    graphique[0][0] = round(Tint * 10);
-    graphique[0][1] = round(Text * 10);
-
-    int16_t TCha = 240;
-    uint8_t err = read_modbus(30, &TCha);  // pour temp chauffage actuel
-    if (err) TCha = 230;                   // 23° par defaut
-    graphique[0][2] = TCha;
-    //Serial.printf("Tcha:%i\r\n", TCha);
-    //if (Mode == 3)
-    //  graphique[0][2] = radiateur_marche * 50 + 120;  // 12°C ou 17°
-
-    //Serial.printf("Graphique:%i\n", graphique[0][2]);
-  }
-
-  if ((Mode == 1) || (Mode == 2)) {
-    float Simul_t_ext = 30.0;
-    float sortie_analo=0.0;
-
-    #ifdef MODBUS
-        save_modbus(32, (uint16_t)(TPAC * 10));
-    #else
-      // transformation en simulation de temperature exterieure, pour commande PAC
-      // si T_PAC < 10 => arret = SText=30
-      // si T_PAC = 20 =>       = SText=20
-      // si T_PAC > 30 => max   = SText=-10
-      // entre les 2 linéraire
-
-      if (TPAC >= TPacMax)
-        Simul_t_ext = -10;
-      else if (TPAC > TPacMin)
-        Simul_t_ext = (TPacMax - TPAC) * 40 / (TPacMax - TPacMin) - 10;
-
-      // sortie analogique vers PAC
-      // -10 => 1400;
-      //  30 => 200:
-
-      //sortie_analo = (  0.5 * ( exp(3950*(1/(Simul_t_ext+273)-1/298.1))) / 3.3 ) * resolutionADC;
-      sortie_analo = S_analo_min - (Simul_t_ext + 10) * (S_analo_min - S_analo_max) / 40;
-      if (sortie_analo > S_analo_min) sortie_analo = S_analo_min;
-      if (sortie_analo < S_analo_max) sortie_analo = S_analo_max;
-
-      //uint8_t resul = ledcWrite(PIN_PAC, sortie_analo);
-      //uint16_t resul16 = ledcRead(PIN_PAC);
-      //Serial.printf("pwm:%i %i\n", resul, resul16);
-    #endif
-
-    Serial.printf("PID:Consigne:%.1f Obj:%.1f Tint:%.1f PID:%.3f TPAC:%.1f Simu:%.1f sortie:%.1f Text:%.1f\n\r", Consigne, T_obj, Tint, Output, TPAC, Simul_t_ext, sortie_analo, Text);
-  }
-*/
-
-  /*  if (Mode == 2)  // radiateur et PAC
-  {
-    if (Tint > (Consigne - 0.5))  // arret chauffage
+  #ifdef ESP_THERMOMETRE
+    // --- MODE THERMOMETRE DISTANT ---
+    uint8_t Tint_erreur = lecture_Tint(&Tint);  // Mesure locale
+    
+    // Envoi de la température à l'ESP Chaudière
+    if (!Tint_erreur)
     {
-      if (radiateur_marche)  // si allumé, on l'éteint
-        radiateur_on(0);
-      else  // on ne le rééteint qu'un fois par 24h
-      {
-        cpt_rad++;
-        if (cpt_rad >= Cpt_max_rad)
-          radiateur_on(0);
+      HTTPClient http;
+      String url = "http://" + String(IP_CHAUDIERE) + "/Set?type=1&reg=RTint&val=" + String(Tint);
+      Serial.printf("Envoi température : %s\n", url.c_str());
+      
+      if (http.begin(url)) {
+        int httpCode = http.GET();
+        if (httpCode > 0) {
+          Serial.printf("Température envoyée, code : %d\n", httpCode);
+        } else {
+          Serial.printf("Erreur envoi : %s\n", http.errorToString(httpCode).c_str());
+        }
+        http.end();
       }
     }
-    if (Tint < (Consigne - 1.5))  // Tint < consigne-1.5 => on attend 24h puis => chauffage
-    {
-      cpt_rad++;
-      if (cpt_rad >= Cpt_max_rad)
-        radiateur_on(1);
-    }
-  }
+  #endif
 
-  if (Mode == 3)  // radiateurs
-  {
-    if (Tint > (Consigne + 0.2))  // arret chauffage
+  #ifdef ESP_CHAUDIERE
+    // --- MODE CHAUDIERE ---
+    // Récupération de la température extérieure par internet
+    fetch_internet_temp();
+
+    // Tint est mise à jour par les requêtes distantes (RTint)
+    
+    // activation ou desactivation chaudiere
+    if (MMCh==2)
     {
-      if (radiateur_marche)  // si allumé, on l'éteint
-        radiateur_on(0);
-      else  // on ne le rééteint qu'un fois par 24h
+      unsigned long now = millis();
+      if (now - last_chaudiere_change > 20000) // Sécurité 20s
       {
-        cpt_rad++;
-        if (cpt_rad >= Cpt_max_rad)
-          radiateur_on(0);
+        if (Consigne < Tint) 
+        {
+          if (chaudiere != 1) {
+            chaudiere = 1; 
+            digitalWrite(PIN_Chaudiere, LOW);  // DesActivation chaudiere
+            last_chaudiere_change = now;
+            Serial.println("Régulation : Arrêt Chaudière (Consigne < Tint)");
+          }
+        }
+        else 
+        {
+          if (chaudiere != 2) {
+            chaudiere = 2;
+            digitalWrite(PIN_Chaudiere, HIGH);  // Activation chaudiere
+            last_chaudiere_change = now;
+            Serial.println("Régulation : Marche Chaudière (Consigne >= Tint)");
+          }
+        }
       }
     }
-    if (Tint < (Consigne - 0.2))  // Tint < consigne => chauffage
+
+    // enregistrement valeur pour graphique
+    compteur_graph++;
+    if (compteur_graph >= skip_graph)  // 1 valeur sur x
     {
-      if (!radiateur_marche)  // si éteint, on l'allume
-        radiateur_on(1);
-      else  // on ne le rallume qu'un fois par 24h
-      {
-        cpt_rad++;
-        if (cpt_rad >= Cpt_max_rad)
-          radiateur_on(1);
+      compteur_graph = 0;
+      for (i = NB_Val_Graph - 1; i; i--) {
+        graphique[i][0] = graphique[i - 1][0];
+        graphique[i][1] = graphique[i - 1][1];
+        graphique[i][2] = graphique[i - 1][2];
       }
+      graphique[0][0] = round(Tint * 10);
+      graphique[0][1] = round(Text * 10);
+
+      graphique[0][2] = chaudiere*5+10;  // 15:arret 20:marche
     }
-  }*/
-//}
+  #endif
+}
+
 
 float loi_deau(float temp_ext, float temp_cons, float *Tloi) {
   float temp_obj;
@@ -1239,26 +1147,3 @@ float loi_deau(float temp_ext, float temp_cons, float *Tloi) {
   return temp_obj;
 }
 
-void lect_tint()
-{
-  //uint8_t Tint_erreur = 0;
-  #ifdef Temp_int_DHT22
-    //dht[0].begin();
-
-    if (digitalRead(PIN_Tint22) == HIGH || digitalRead(PIN_Tint22) == LOW)
-    {
-      Tint = dht[0].readTemperature();
-      //Tint=10;
-      if (isnan(Tint))
-      {
-        Tint = 20.0;
-        //Tint_erreur = 6;
-        Serial.println("---DHT:non numérique");
-      }
-      else
-        Serial.printf("lecture dht22 ok : %.2f\n\r", Tint);
-    }
-    else
-      Serial.println("---DHT:signal non stable!");
-  #endif
-}

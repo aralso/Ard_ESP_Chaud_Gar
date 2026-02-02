@@ -9,7 +9,7 @@
 
 //  -------  CONFIGURATION DES PINS -----------------------------------------------
 
-/* PINOUT WT32-Eth01 :
+/* PINOUT DOIT :
 0: pour programmation
 1: TX pour prog & debug
 2: OUT2 : sortie PAC
@@ -20,6 +20,7 @@
 14: SDA Eclairs 
 15: DSB1820 capteur temp piscine
 17: SCL Eclairs
+21-22 : SDA, SCL HDC1080
 32: IN:capteur DHT22 N°2
 33: IN:capteur DHT22 N°1
 35:(pin17) (in only) IN : interruption éclairs
@@ -139,11 +140,18 @@ extern uint8_t HG, Ballon;
 extern uint8_t mode_pid;
 extern const int PIN_Tint;
 extern uint8_t skip_graph;
+extern uint8_t MMCh;
 
 extern planning_t plan[];
 extern uint16_t forcage_duree;
 extern uint8_t forcage_consigne;
 extern uint8_t ch_arret;
+extern unsigned long last_chaudiere_change;
+extern char mdp_routeur[16];
+extern unsigned long last_remote_temp_time;
+
+extern float  tempI_moy24h, tempE_moy24h;
+extern uint8_t cpt24_Tint, cpt24_Text;
 
 extern int16_t graphique[NB_Val_Graph][NB_Graphique];
 

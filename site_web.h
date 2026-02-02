@@ -100,18 +100,6 @@ const char index_html[] PROGMEM = R"rawliteral(
                 </div>
             </div>
 
-            <div class="input-group" id="Mar-group">
-              <label for="MarAr">Marche Chaudiere</label>
-              <div class="switch">
-                  <input id="MarAr" type="checkbox"  class="default-action">
-                  <label class="slider" for="MarAr"></label>
-              </div>
-              <div class="default-action">
-                <div class="container">
-                  <div id="MarAr_led" class="default-action" ></div>
-                </div>
-              </div>                  
-            </div>
 
             <div class="input-group" id="HG-group">
               <label for="HG">Hors Gel</label>
