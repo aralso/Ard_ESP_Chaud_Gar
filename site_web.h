@@ -379,6 +379,8 @@ const char index_html[] PROGMEM = R"rawliteral(
                   32 : graphique_temp ext<br>
                   33: graphique_temp pac<br>
                   40 : mode : 1:PAC 2:PAC+Rad 3:Rad<br>
+                  41 : canal wifi
+                  42 : canal wifi prérentiel (thermom)
                   <br>
 
               <div class="input-group" id="set-regT-group">
@@ -417,44 +419,9 @@ const char index_html[] PROGMEM = R"rawliteral(
                   8 : websocket On (1-2)<br>
                   9 : websocket<br>
                   10 : websock id<br>
+                  11 : adresse Chaudiere<br>
     
 
-              <div class="input-group" id="set-regM-group">
-                  <label for="set-regM" style="width:120px">Modbus:Reg,Val:</label>
-                  <div class="text">
-                      <input id="regM-addr" type="text" minlength="4" maxlength="6" size="6" value="3">
-                  </div>
-                  <div class="text">
-                      <input id="regM-value" type="text" minlength="4" maxlength="5" size="5" value="128">
-                  </div>
-                  <button class="inline-button" id="set-regM">Set</button>
-              </div>
-              <div class="input-group" id="get-regM-group">
-                  <label for="get-regM" style="width:120px">Modbus:Reg:</label>
-                  <div class="text">
-                      <input id="get-regM-addr" type="text" minlength="4" maxlength="6" size="6" value="3">
-                  </div>
-                  <button class="inline-button" id="get-regM">Get</button>
-              </div>
-              <div class="input-group">
-                  <label for="get-regM-value" style="width:120px">Value Modbus:</label>
-                  <div class="text">
-                      <span id="get-regM-value">100</span>
-                  </div>
-              </div>
-              <hr style="width:100px">
-              <p>Registres MODBUS:<br>
-                  158: E : Arret chauffage<br>
-                  160: E : Arret ECS<br>
-                  32 : E : Ecriture consigne chauffage<br> 
-                  38 : E : Ecriture Temp consigne ECS<br>
-                  19 : L : Temp ballon ECS<br>
-                  37 : L : Temp consigne ECS<br>
-                  30 : L : Temp chauffage actuel<br>
-                  12 : L : Temp chauff départ<br>
-                  11 : L : Temp chauff retour<br>
-                  31 : L : Temp consigne chauffage<br>
-                  25 : L : Puissance elec compresseur<br>
 
             <div>
             <h1>Log erreurs: 1(Tint) 2(Text) 3(Teau)..</h1>
@@ -808,7 +775,7 @@ const char index_html[] PROGMEM = R"rawliteral(
             if ((el.id === 'code_secu') || (el.id === 'coche_secu')) {
               setTimeout(() => { get_value('codeR_secu'); }, 1000);
             }
-            if ((el.id === 'HG') || (el.id === 'MarAr')) {
+            if ((el.id === 'HG') || (el.id === 'MMC')) {
               setTimeout(() => { get_value(el.id); }, 1000);
             }
           })

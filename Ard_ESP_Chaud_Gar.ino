@@ -1,7 +1,8 @@
 /* 
 
-TODO : 
+TODO : traiter panne routeur => arret esp_now
 
+v1.4 02/2026 esp_now
 v1.3 02/2026 OTA, ajout esp32_thermometre, mesure Text par internet
 v1.2 12/2025 1ere version ops, modif site web, compil ok
 v1.1 12/2025 copie de PAC_Catalane v1.16
@@ -28,34 +29,46 @@ Configuration des options de programmation :
 
 // Hardware
 //#define MODE_WT32  // WT32-Eth01 sinon ESP32-CAM ou DOIT ESP32 Devkit V1
-#define ESP32_v1    // DOIT ESP32 DEVKIt V1  sinon ESP32_S3
+
+//#define DEBUG  // mode station, pas de websocket, pas de sécurite, emulation valeurs STM32
+
+#ifdef ESP_THERMOMETRE
+  #define ESP32_v1    // DOIT ESP32 DEVKIt V1  sinon ESP32_S3
+  #define Temp_int_HDC1080  // Capteur I2C HDC1080
+  #define MODE_Wifi  // Wifi sinon Ethernet
+  #define Sans_securite
+  #define Sans_websocket
+  #ifdef DEBUG   // debug
+  #endif
+
+#else  // Chaudiere
+  #define ESP32_v1    // DOIT ESP32 DEVKIt V1  sinon ESP32_S3
+  #define MODE_Wifi  // Wifi sinon Ethernet
+  #define Sans_websocket
+  #define Sans_securite
+  #ifdef DEBUG   // debug
+    #define Sans_securite
+  #else   // ops
+    #define WatchDog
+
+  #endif
+
+#endif
 
 //#define Temp_int_DHT22
 //#define Temp_int_DS18B20
-#define Temp_int_HDC1080  // Capteur I2C HDC1080
 
 // Réseau
 //#define NO_RESEAU
 
-#define MODE_Wifi  // Wifi sinon Ethernet
 //#define Wifi_AP    // AP sinon STA
 
-#define DEBUG  // mode station, pas de websocket, pas de sécurite, emulation valeurs STM32
-
-//#define WatchDog
 //#define STM32  //incompatible du modbus, sauf à changer les pin
-
-
-#ifdef DEBUG   // debug
-  #define Sans_securite
-  #define Sans_websocket
-#else   // ops
-
-#endif
+// #define OTA
 
 
 #define DELAI_PING  180  // en secondes, pour le websocket
-#define Version "V1.3"
+#define Version "V1.4"
 
 #define IP_CHAUDIERE "192.168.251.31" // Adresse IP de l'ESP Chaudière
 #define LATITUDE "48.8461"
@@ -121,6 +134,7 @@ extern "C" {
 uint8_t err_wifi_repet;  // permet de resetter si le wifi ne se rétablit pas au bout de 4 jours
 
 uint8_t init_masquage=1;
+uint8_t cpt24h_batt=6;
 
 // variable globale de 4000c en RAM pour dump log et autres requetes
 #define MAX_DUMP 5500  // 1050 car par graphique
@@ -157,6 +171,8 @@ char buffer_dmp[MAX_DUMP];  // max 250 logs, 16 octets chacun
   IPAddress subnet;    // Masque de sous-réseau
   IPAddress primaryDNS;      // DNS Primaire (Google DNS)
   IPAddress secondaryDNS;    // DNS Secondaire (Google DNS)
+
+void OnDataRecv(const esp_now_recv_info_t * info, const uint8_t *incomingData, int len);
 
 #else  // WT32
   #include <ETH.h>
@@ -195,7 +211,11 @@ unsigned long last_remote_temp_time = 0;
 
 int16_t  graphique [NB_Val_Graph][NB_Graphique];
 
-uint16_t nb_err_reseau=0;
+// Status
+RTC_DATA_ATTR uint16_t val_sentinelle = 0x62F3;
+uint8_t reset_deep_sleep;  // 0:cold reset  1:reset apres deep sleep
+RTC_DATA_ATTR uint16_t nb_err_reseau=0;
+RTC_DATA_ATTR uint16_t cpt_cycle_batt=0; // Compteur cycles pour mesure batterie
 uint16_t erreur_queue=0;
 uint8_t num_err_queue[5];
 uint8_t cpt_init=0;
@@ -210,6 +230,9 @@ bool isWebSocketConnected = false;
 uint8_t DelaiWebsocket = 1;
 uint16_t cpt_ws_timeout=0, cpt_ws_ping=0;
 
+volatile bool force_stay_awake = false; // Flag pour rester éveillé après appui bouton
+unsigned long wake_up_time = 0; // Temps de réveil
+
 //x seconds Watchdog 
 #define WDT_TIMEOUT 80  // reset watchdog dividé par 3 => 24 secondes
 uint16_t param_wdt_delay = 1;
@@ -221,6 +244,8 @@ const int daylightOffset_sec = 3600 * 1;  // heure d'été
 struct tm timeinfo;
 time_t now;
 uint8_t init_time = 0;  // 0:pas initialisé, 1:à8h, 3:avec internet
+RTC_DATA_ATTR uint8_t last_wifi_channel = 6; // Mémorisation du canal Wifi en DeepSleep
+float Vbatt_Th = 0.0;   // Stockage tension batterie distante
 
 uint8_t periode_cycle=15;
 
@@ -246,8 +271,8 @@ Preferences preferences_nvs;
 //#define PAGE_1_START 0     // Début de la première page
 //#define PAGE_2_START 4096  // Début de la deuxième page
 
-uint8_t activePage;  // 0: non defini  1 ou 2
-uint16_t activeIndex;  // 0:non défini
+RTC_DATA_ATTR uint8_t activePage=0;  // 0: non defini  1 ou 2
+RTC_DATA_ATTR uint16_t activeIndex=0;  // 0:non défini
 
 
 #define MSG_SIZE 40
@@ -300,8 +325,8 @@ uint8_t etat_connect_ethernet = 0;
 AsyncWebServer server(80);
 
 uint8_t cycle24h;
-float  tempI_moy24h, tempE_moy24h;
-uint8_t cpt24_Tint, cpt24_Text;
+RTC_DATA_ATTR float  tempI_moy24h=0, tempE_moy24h=0;
+RTC_DATA_ATTR uint8_t cpt24_Tint=0, cpt24_Text=0;
 
 #define DEBOUNCE_INTERVAL 300  // Temps anti-rebond en ms
 #define VALIDATION_COUNT 10  // Nombre de lectures consécutives pour valider un changement
@@ -313,7 +338,7 @@ volatile int lastButtonState[BTN_COUNT] = {HIGH};  // États précédents
 volatile int stableButtonState[BTN_COUNT] = {HIGH}; // États stables validés
 volatile int pressCounter[BTN_COUNT] = {0}; // Compteurs de validation
 
-const int BTN_PIN[BTN_COUNT] = {12};  // Pins des boutons
+const int BTN_PIN[BTN_COUNT] = {13};  // Pins des boutons
 
 
 #define configASSERT_CODE( x, code ) if( ( x ) == 0 ) { \
@@ -604,9 +629,13 @@ void uartTask(void * parameter) {
         }
       } else
       {
-        if (uartLong < MSG_SIZE-1)
+        // Filtre : On ne garde que les caractères imprimables pour éviter les parasites
+        if (c >= 32 && c <= 126) 
         {
-          uartInput[uartLong++] = c;
+          if (uartLong < MSG_SIZE-1)
+          {
+            uartInput[uartLong++] = c;
+          }
         }
       }
     }
@@ -706,18 +735,30 @@ void taskHandler(void *parameter) {
                 }
                 break;
                 case EVENT_UART: {
-                  //Serial.printf(">> Événement UART reçu: byte = %s\n", evt.msg); 
-                  // 1-12  1-12:48
-                  UartMessage_t uartMsg;
-                  while (xQueueReceive(QueueUart, &uartMsg, 0) == pdTRUE) {
-                    Serial.printf("Message UART (%d octets) : ", uartMsg.longueur);
-                    for (uint16_t i = 0; i < uartMsg.longueur-1 && i < MSG_SIZE; i++) {
-                      Serial.print(uartMsg.msg[i]);
+                    // Si on est en mode "Stay Awake", on prolonge de 30s à chaque message complet reçu
+                    #ifdef ESP_THERMOMETRE
+                        // Si une commande UART arrive, on force le réveil si ce n'est pas déjà fait
+                        if (!force_stay_awake) {
+                            force_stay_awake = true; 
+                            Serial.println("INTERCEPTION UART: Activation du délai de 30s !");
+                        }
+                    #endif
+
+                    if (force_stay_awake) {
+                        wake_up_time = millis();
+                        Serial.println("Activité UART détectée : prolongation du délai de 30s.");
                     }
-                    Serial.println();
-                    recep_message(uartMsg.msg);
-                  }                  
-                  break;
+                    
+                    UartMessage_t uartMsg;
+                    while (xQueueReceive(QueueUart, &uartMsg, 0) == pdTRUE) {
+                        Serial.printf("Message UART (%d octets) : ", uartMsg.longueur);
+                        for (uint16_t i = 0; i < uartMsg.longueur-1 && i < MSG_SIZE; i++) {
+                            Serial.print(uartMsg.msg[i]);
+                        }
+                        Serial.println();
+                        recep_message(uartMsg.msg);
+                    }                  
+                    break;
                 }
 
                 case EVENT_UART1: {
@@ -817,6 +858,7 @@ void taskHandler(void *parameter) {
 
                 case EVENT_24H:
                 {
+                  
                   getLocalTime(&timeinfo);  // déclenche resynchro réseau à chaque appel. 5s si pb reseau
 
                   // faire un ping pour vérifier que la liaison IP fonctionne
@@ -854,10 +896,18 @@ void taskHandler(void *parameter) {
                     #endif
                   }
 
-                  // Log toutes les 24 heures : nb d'erreurs wifi et temp moyenne
-                  if (nb_err_reseau>255) nb_err_reseau=255;
-                  writeLog('K', 0, 0, (uint8_t)nb_err_reseau, "24H_Res");
-                  nb_err_reseau=0;
+                    // Log toutes les semaines : nb d'erreurs wifi et batteries
+                  cpt24h_batt++;
+                  if (cpt24h_batt > 6)  // 1er log au bout d'une journée 
+                  {
+                    cpt24h_batt=0;
+                    float vbatt = readBatteryVoltage();
+                    //Serial.printf("Tension Batterie 24h : %.2f V\n", vbatt);
+                    if (nb_err_reseau>255) nb_err_reseau=255;
+                    writeLog('K', (uint8_t)((vbatt-2.0)*100), (uint8_t)((Vbatt_Th-2.0)*100), (uint8_t)nb_err_reseau, "24H_Res");
+                    nb_err_reseau=0;
+                    Vbatt_Th = 2.0; // permet de savoir, au prochain event, qu'il n'y a pas eu de maj
+                  }
 
                   uint8_t tempI = (uint8_t)(tempI_moy24h/cpt24_Tint*10);
                   uint8_t tempE = (uint8_t)(tempE_moy24h/cpt24_Text*10);
@@ -921,21 +971,35 @@ void taskHandler(void *parameter) {
 void setup()
 {
   
-  delay(2000);
+  delay(1000);
   // Cause reset :
   resetReason0 = (uint8_t) esp_reset_reason();
+  Serial.begin(115200);
+  
+  // Cause réveil :
+  esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+  if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0) {
+    force_stay_awake = true; // Réveil par bouton : on reste éveillé pour l'UART
+    wake_up_time = millis();
+    Serial.println("\n*** RÉVEIL PAR BOUTON : Mode configuration UART actif pour 30s ***");
+  }
   strncpy(resetREASON0, verbose_reset_reason(resetReason0), sizeof(resetREASON0) - 1);
   resetREASON0[sizeof(resetREASON0) - 1] = '\0'; // Garantit la terminaison null
 
-  Serial.begin(115200);
+  reset_deep_sleep = 1;
+  if (val_sentinelle == 0x62F3) 
+  {
+    val_sentinelle = 0x1234;
+    reset_deep_sleep = 0;  
+  }
 
   // Optimisation processeur : autorise le processeur à s'arrêter si inactif
-  esp_pm_config_esp32_t pm_config = {
+  /*esp_pm_config_esp32_t pm_config = {
       .max_freq_mhz = 80,
       .min_freq_mhz = 10,
       .light_sleep_enable = true
   };
-  //esp_pm_configure(&pm_config);
+  esp_pm_configure(&pm_config);*/
 
   // Optimisation consommation : arrêt Bluetooth
   btStop();
@@ -1017,7 +1081,8 @@ void setup()
   // Configurer l'interruption GPIO sur GPIO 18 (ex: bouton poussoir)
   //pinMode(18, INPUT_PULLUP);
   //attachInterrupt(digitalPinToInterrupt(18), onGPIO, FALLING);
-    pinMode(BTN_PIN[0], INPUT_PULLUP); // Wifi_AP au démarrage
+    pinMode(PIN_REVEIL, INPUT_PULLUP); // Bouton de réveil / Wifi_AP au démarrage
+    pinMode(BTN_PIN[0], INPUT_PULLUP);
     /*pinMode(BTN_PIN[1], INPUT_PULLUP);
     pinMode(BTN_PIN[2], INPUT_PULLUP);
     pinMode(BTN_PIN[3], INPUT_PULLUP);
@@ -1193,7 +1258,8 @@ void setup()
     }
     else
       Serial.printf("Id websocket : %i\n\r", id_websocket);
-  //}
+
+
 
     // Initialisation variable skip graph
     skip_graph = preferences_nvs.getUChar("Skip", 0);
@@ -1217,14 +1283,16 @@ void setup()
     log_err=1;
   }
   else
-    Serial.println("Partition 'log_flash' trouvée.");
+    #ifndef ESP_THERMOMETRE
+      Serial.println("Partition 'log_flash' trouvée.");
 
-    delay(500 + random(1, 1001) );
-    writeLog('S', 0, resetReason0, 0, "Init");
-    delay(500);
+      delay(500 + random(1, 1001) );
+      writeLog('S', 0, resetReason0, 0, "Init");
+      delay(500);
 
-  readLastLogsBinary((uint8_t*)buffer_dmp, 10);  
-  delay(500);
+      readLastLogsBinary((uint8_t*)buffer_dmp, 10);  
+      delay(500);
+    #endif
 
   // Configuration des timers FreeRTOS (max 49 jours)
   // Timer à l'initialisation pour masquer 10 secondes les envois au transmetteur et init heure, puis 30 sec
@@ -1277,16 +1345,18 @@ void setup()
     xTimerStart(xTimer_Watchdog,100);
   #endif
 
-  delay(1000); // Attente 4 sec pour que les boutons se stabilisent
+  #ifndef ESP_THERMOMETRE
+    delay(1000); // Attente 4 sec pour que les boutons se stabilisent
 
-  xTimerStart(xTimer_Init,100);
-  xTimerStart(xTimer_3min,100);
-  xTimerStart(xTimer_24H,100);
-  xTimerStart(xTimer_Cycle,100);
-  //xTimerStart(xTimer_Compresseur,100);
+    xTimerStart(xTimer_Init,100);
+    xTimerStart(xTimer_3min,100);
+    xTimerStart(xTimer_24H,100);
+    xTimerStart(xTimer_Cycle,100);
+    //xTimerStart(xTimer_Compresseur,100);
 
-  delay(1000); // Attente 4 sec pour que les boutons se stabilisent
-  
+    delay(1000); // Attente 4 sec pour que les boutons se stabilisent
+  #endif
+
   // Reset du watchdog avant de démarrer le réseau
   #ifdef WatchDog
     esp_task_wdt_reset();
@@ -1353,7 +1423,7 @@ void setup()
         eth_connected = true;
       }
       if (WiFi.status() == WL_CONNECTED) {
-        Serial.println("Wifi OK");
+        //Serial.println("Wifi OK");
         // Optimisation consommation : activation du Modem Sleep
         //WiFi.setSleep(true);
       }
@@ -1391,8 +1461,9 @@ void setup()
 
 
   // On configure le serveur NTP
-  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-
+  #ifndef ESP_THERMOMETRE
+    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  #endif
 
   //uint8_t clock = ledcGetClockSource();  // pour pwm
   //Serial.printf("clock:%i\n\r",clock);  // Clock=11
@@ -1411,10 +1482,11 @@ void setup()
 
   #endif // No_reseau
 
-  #ifdef WatchDog
-    esp_task_wdt_reset();
-    Serial.println("reset watchdog fin setup");
-    delay(10);  // Important de mettre au moins 1ms
+
+  #ifdef ESP_THERMOMETRE
+    // Pour le mode thermomètre, on déclenche la mesure et le sommeil immédiatement après le setup
+    //Serial.println("Déclenchement mesure initiale...");
+    event_mesure_temp();
   #endif
 
   // Reset final du watchdog après la configuration réseau
@@ -1426,45 +1498,48 @@ void setup()
 
   printMemoryStatus();
 
-  //setup_2();
+  setup_2();
+
 // Configuration OTA
 // --- OTA ---
-  ArduinoOTA.setHostname("ESP32S3");
-  ArduinoOTA.setPassword("Corail2025");
+  #ifdef OTA
+    ArduinoOTA.setHostname("ESP32S3");
+    ArduinoOTA.setPassword("Corail2025");
 
+    ArduinoOTA.onStart([]() {
+      String type;
+      if (ArduinoOTA.getCommand() == U_FLASH) type = "sketch";
+      else type = "filesystem";
+      Serial.println("Mise à jour OTA: " + type);
+    });
 
+    ArduinoOTA.onEnd([]() {
+      Serial.println("\nFin");
+    });
 
-  ArduinoOTA.onStart([]() {
-    String type;
-    if (ArduinoOTA.getCommand() == U_FLASH) type = "sketch";
-    else type = "filesystem";
-    Serial.println("Mise à jour OTA: " + type);
-  });
+    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+      Serial.printf("Progression: %u%%\r", (progress / (total / 100)));
+    });
 
-  ArduinoOTA.onEnd([]() {
-    Serial.println("\nFin");
-  });
+    ArduinoOTA.onError([](ota_error_t error) {
+      Serial.printf("Erreur[%u]: ", error);
+      if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+      else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+      else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+      else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+      else if (error == OTA_END_ERROR) Serial.println("End Failed");
+    });
 
-  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-    Serial.printf("Progression: %u%%\r", (progress / (total / 100)));
-  });
-
-  ArduinoOTA.onError([](ota_error_t error) {
-    Serial.printf("Erreur[%u]: ", error);
-    if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
-    else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
-    else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
-    else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
-    else if (error == OTA_END_ERROR) Serial.println("End Failed");
-  });
-
-  ArduinoOTA.begin();
-  Serial.println("OTA prêt");
+    ArduinoOTA.begin();
+    Serial.println("OTA prêt");
+  #endif
 
 
   Serial.println("fin setup:");
 
-  esp_task_wdt_delete(NULL); // desinscription de la tache setup/loop de la surveillance watchdog : permet d'éviter le reset_wdt dans la tache loop
+  #ifdef WATCHDOG
+    esp_task_wdt_delete(NULL); // desinscription de la tache setup/loop de la surveillance watchdog : permet d'éviter le reset_wdt dans la tache loop
+  #endif
 
 }
 
@@ -2467,6 +2542,15 @@ uint8_t requete_GetReg(int reg, float *valeur) {
     }
   }
 
+  if (reg == 41)  // registre 41 : canal WiFi actuel
+  {
+    res = 0;
+    uint8_t current_channel;
+    wifi_second_chan_t second;
+    esp_wifi_get_channel(&current_channel, &second);
+    *valeur = (float)current_channel;
+  }
+
 
   res2 = requete_GetReg_appli(reg, valeur);
 
@@ -2708,9 +2792,11 @@ void requete_status(char *json_response, uint8_t socket, uint8_t type)
   p += sprintf(p, "\"Output\":%.3f,", Output);
   p += sprintf(p, "\"DerFct\":%i,", dernier_fct);
   p += sprintf(p, "\"DerFin\":%i,", heure_arret);
-  p += sprintf(p, "\"ForD\":%i,", forcage_duree);
+  p += sprintf(p, "\"ForD\":%i,", forcage_horaire);
   p += sprintf(p, "\"ForC\":%i,", forcage_consigne);
   p += sprintf(p, "\"MMC\":%i,", MMCh-1);
+  uint16_t last_temp_time = (last_remote_temp_time/1000/60);  // temps en minutes
+  p += sprintf(p, "\"LRTT\":%i,", last_temp_time);
 
   /*#ifdef MODBUS
   p += sprintf(p, "\"TEx\":%.1f,", TEx);
@@ -2804,17 +2890,19 @@ void requete_status(char *json_response, uint8_t socket, uint8_t type)
 
 void printMemoryStatus()
 {
-  size_t internalFree = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-  size_t largestBlock = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
-  size_t totalFree = esp_get_free_heap_size();
+  #ifdef DEBUG
+    size_t internalFree = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    size_t largestBlock = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+    size_t totalFree = esp_get_free_heap_size();
 
-  snprintf(buffer_dmp, MAX_DUMP,
-             "Memoire interne:%u   contigu:%u  total:%u\r\n",
-             (unsigned int)internalFree,
-             (unsigned int)largestBlock,
-             (unsigned int)totalFree);
-  Serial.printf("Memoire interne:%d   contigu:%d  total:%d \n\r", internalFree, largestBlock, totalFree );
-  delay(10);
+    snprintf(buffer_dmp, MAX_DUMP,
+              "Memoire interne:%u   contigu:%u  total:%u\r\n",
+              (unsigned int)internalFree,
+              (unsigned int)largestBlock,
+              (unsigned int)totalFree);
+    Serial.printf("Memoire interne:%d   contigu:%d  total:%d \n\r", internalFree, largestBlock, totalFree );
+    delay(10);
+  #endif
 }
 
 // Fonction pour calculer le checksum Contact ID
@@ -3044,29 +3132,6 @@ void traitement_rx(UartMessage_t * mess)
 			{
         if ((message_in[5] == 'P') && (longueur_m == 15))   // CHEPnxxyyzztt  Planning  %cCHEP%i%02X%02X%i%02X%02X  i, ch_debut[i], ch_fin[i], ch_type[i], ch_consigne[i], ch_cons_apres[i])
         {
-          uint8_t i = message_in[6]-'0';
-          if (i < NB_MAX_PGM)
-          {
-             plan[i].ch_debut = decod_asc8(message_in+7);
-             plan[i].ch_fin = decod_asc8(message_in+9);
-             plan[i].ch_type = decod_asc8(message_in+11);
-             plan[i].ch_consigne = decod_asc8(message_in+13);
-             plan[i].ch_cons_apres = decod_asc8(message_in+15);
-            Serial.printf("CHEP%i%02X%02X%i%02X%02X", i, plan[i].ch_debut, plan[i].ch_fin, plan[i].ch_type, plan[i].ch_consigne, plan[i].ch_cons_apres);
-          }
-        }
-        if ((message_in[5] == 'F') && (longueur_m == 12))   // CHEFxxxxyy  Forcage  %cCHEF%04X%02X", message_in[1], forcage_duree, forcage_consigne);
-        {
-          uint16_t forcd = decod_asc16(message_in+6);
-          uint8_t forcc = decod_asc8(message_in+10);
-
-          forcage_duree = forcd;
-          forcage_consigne = forcc;
-        }
-        if ((message_in[5] == 'A') && (longueur_m == 7))   // CHEAx  Arret  %cCHEA%i", message_in[1], ch_arret)
-        {
-          if ((message_in[6] == '0') || (message_in[6] == '1'))
-            ch_arret = message_in[6] - '0';
         }
       }
     }
@@ -3418,6 +3483,24 @@ void loop()
   //heap_caps_check_integrity_all(true);  // place ce test dans ton loop()
 
   ArduinoOTA.handle();
+
+  #ifdef ESP_THERMOMETRE
+    // Si on est en mode "Stay Awake" (réveil par bouton), on attend 30s
+    if (force_stay_awake) {
+      if (millis() - wake_up_time > 30000) {
+         Serial.println("Délai de configuration de 30s expiré. Passage en Deep Sleep...");
+         Serial.flush();
+         delay(100);
+         
+         uint64_t sleep_time = (uint64_t)periode_cycle * 60 * 1000000;
+         if (mode_rapide==12)
+          sleep_time = (uint64_t)periode_cycle * 1000000;
+         esp_sleep_enable_timer_wakeup(sleep_time);
+         esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_REVEIL, 0); // Réveil par bouton (0 = bas)
+         esp_deep_sleep_start();
+      }
+    }
+  #endif
 
   //Serial.printf("loop - secu:%d\n\r", cpt_securite);
   //vTaskDelay(temps_boucle_loop*1000 / portTICK_PERIOD_MS); // Petite pause
@@ -3797,8 +3880,6 @@ void modif_timer_cycle(void)
 
   uint16_t period = periode_cycle*60;
   if (mode_rapide) period = periode_cycle;
-
-  Serial1.printf("JVECy%i", period);  // Envoi de la duree du cycle au STM32, en secondes
 }
 
 void print_task_states() {

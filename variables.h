@@ -7,6 +7,23 @@
 #include <OneWire.h>
 #include <DallasTemperature.h>
 
+#include <esp_now.h>
+#include <esp_wifi.h>
+
+// Definir le canal WIFI ici (doit correspondre au routeur pour la Chaudière)
+// ⚠️ IMPORTANT : Ce canal DOIT correspondre au canal de votre routeur WiFi "garches"
+// Pour le trouver : regardez les logs de la chaudière au démarrage
+
+// Adresse par défaut de la chaudière (B0:CB:D8:E9:0C:74) 
+const uint8_t MAC_CHAUDIERE[] = {0xB0, 0xCB, 0xD8, 0xE9, 0x0C, 0x74};
+
+extern RTC_DATA_ATTR uint8_t last_wifi_channel;
+
+typedef struct {
+  uint8_t type;       // 1: Temperature, 2: Batterie
+  float value;
+} Message_EspNow;
+
 //  -------  CONFIGURATION DES PINS -----------------------------------------------
 
 /* PINOUT DOIT :
@@ -16,7 +33,7 @@
 3: RX pour prog & debug
 4: OUT1 : sortie Pompe
 5(pin4:markIO35): OUT3 : sortie Arret
-12: IN:capteur DHT22 N°3
+12: Btn_reveil
 14: SDA Eclairs 
 15: DSB1820 capteur temp piscine
 17: SCL Eclairs
@@ -27,8 +44,8 @@
 36: (in only) IN : capteur pression
 39: (in only) IN
 */
-/*#define BTN1 12  // Defaut secteur (pullup)
-#define BTN2 13  // intrusion    (pullup)
+/*#define BTN1 13  // Defaut secteur (pullup)
+#define BTN2 12  // intrusion    (pullup)
 #define BTN3 14  // autoprotection    (pullup)
 #define BTN4 15  // marche/Arret    (no pull)  0V:arret 12V:marche
 #define BNT5 16  // Reset pour Accesspoint*/
@@ -36,30 +53,35 @@
 
 
 #ifdef MODE_WT32           // WT32_Eth01
-//const int PIN_Tint = 11;   // GPIO IN1 Temp interieure DS18B20
-const int PIN_Tint22 = 5;  // GPIO IN1 Temp interieure DHT22
-const int PIN_PAC = 4;     // GPIO OUT PAC PWM
-const int PIN_Text = 36;   //  Text:Entrée analogique 32 à 36 et 39
-const int PIN_Chaudiere = 19;
+  //const int PIN_Tint = 11;   // GPIO IN1 Temp interieure DS18B20
+  const int PIN_Tint22 = 5;  // GPIO IN1 Temp interieure DHT22
+  const int PIN_PAC = 4;     // GPIO OUT PAC PWM
+  const int PIN_Text = 36;   //  Text:Entrée analogique 32 à 36 et 39
+  const int PIN_Chaudiere = 19;
 #else                      // ESP32_DevKit
-//const int PIN_Tint = 13;  Défini dans le fichier appli.ino
-const int PIN_Tint22 = 5;     // GPIO IN1 Temp interieure DHT22
-const int PIN_PAC = 4;        //  OUT PAC - PWM  40kOhm+100nF(Fc=40Hz) et PWM=40khz
-const int PIN_Text = 36;      //  Text:Entrée analogique 32 à 36 et 39
-const int PIN_Chaudiere = 19;
-#ifdef ESP32_v1
-  const int PIN_RXModbus = 16;  // s3:18  devkitv1:16 RO
-  const int PIN_TXModbus = 17;  // s3:17  devkitv1:17 DI
-#else
-  const int PIN_RXModbus = 18;  // s3:18  devkitv1:16 RO
-  const int PIN_TXModbus = 17;  // s3:17  devkitv1:17 DI
-#endif
-const int PIN_on = 19;   // allumage et extinction d'un système avec 2 boutons
-const int PIN_off = 19;
-//const int PIN_RE = 32;
-//const int PIN_DE = 33;
-const int PIN_RXSTM = 18;  // RX STM32
-const int PIN_TXSTM = 17;  // TX STM32
+  //const int PIN_Tint = 13;  Défini dans le fichier appli.ino
+  const int PIN_Tint22 = 5;     // GPIO IN1 Temp interieure DHT22
+  const int PIN_PAC = 4;        //  OUT PAC - PWM  40kOhm+100nF(Fc=40Hz) et PWM=40khz
+  #define PIN_REVEIL 12  // Pin de réveil (Bouton externe)
+#define PIN_Vbatt 35   // Pin Surveillance Batterie (LiPo/2)
+
+float readBatteryVoltage();
+extern float Vbatt_Th; // Tension batterie thermomètre
+  const int PIN_Chaudiere = 19;
+  const int PIN_Text = 36;      //  Text:Entrée analogique 32 à 36 et 39
+  #ifdef ESP32_v1
+    const int PIN_RXModbus = 16;  // s3:18  devkitv1:16 RO
+    const int PIN_TXModbus = 17;  // s3:17  devkitv1:17 DI
+  #else
+    const int PIN_RXModbus = 18;  // s3:18  devkitv1:16 RO
+    const int PIN_TXModbus = 17;  // s3:17  devkitv1:17 DI
+  #endif
+  const int PIN_on = 19;   // allumage et extinction d'un système avec 2 boutons
+  const int PIN_off = 19;
+  //const int PIN_RE = 32;
+  //const int PIN_DE = 33;
+  const int PIN_RXSTM = 18;  // RX STM32
+  const int PIN_TXSTM = 17;  // TX STM32
 #endif
 //#define sorties analogique : 25 ou 26 (avec Dacwrite)
 
@@ -119,6 +141,7 @@ typedef struct {
 #define Code_erreur_google 7
 #define Code_erreur_http_local  8
 #define Code_erreur_wifi  9
+#define Code_erreur_esp_now  10
 
 #define DEBOUNCE_INTERVAL 300  // Temps anti-rebond en ms
 
@@ -141,10 +164,14 @@ extern uint8_t mode_pid;
 extern const int PIN_Tint;
 extern uint8_t skip_graph;
 extern uint8_t MMCh;
+extern uint8_t  WIFI_CHANNEL;
+extern RTC_DATA_ATTR uint8_t last_wifi_channel; // Mémorisation du canal Wifi en DeepSleep
+extern uint8_t reset_deep_sleep;  // 0:cold reset  1:reset apres deep sleep
 
 extern planning_t plan[];
-extern uint16_t forcage_duree;
+extern uint16_t forcage_horaire;
 extern uint8_t forcage_consigne;
+extern uint8_t Mode_Fixe;
 extern uint8_t ch_arret;
 extern unsigned long last_chaudiere_change;
 extern char mdp_routeur[16];
@@ -159,6 +186,9 @@ extern Preferences preferences_nvs;  // Déclaration externe
 
 extern uint16_t heure_arret, dernier_fct;
 extern uint8_t etat_compr; 
+extern volatile bool force_stay_awake;
+extern unsigned long wake_up_time; // Temps de réveil/dernière activité
+
 
 
 void writeLog(uint8_t code, uint8_t c1, uint8_t c2, uint8_t c3, const char* message);
@@ -182,6 +212,7 @@ uint8_t requete_Set_String_appli(int param, const char *texte);
 uint8_t lecture_Tint(float *mesure);
 uint8_t lecture_Text(float *mesure);
 void event_mesure_temp();
+void maj_etat_chaudiere();
 void event_mesure_compresseur();
 
 // Fonctions WiFi
