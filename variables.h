@@ -17,7 +17,6 @@
 // Adresse par défaut de la chaudière (B0:CB:D8:E9:0C:74) 
 const uint8_t MAC_CHAUDIERE[] = {0xB0, 0xCB, 0xD8, 0xE9, 0x0C, 0x74};
 
-extern RTC_DATA_ATTR uint8_t last_wifi_channel;
 
 typedef struct {
   uint8_t type;       // 1: Temperature, 2: Batterie
@@ -153,7 +152,7 @@ extern WiFiClient client;
 extern QueueHandle_t eventQueue;  // File d'attente des événements sequenceur
 extern uint16_t erreur_queue;
 extern TimerHandle_t debounceTimer;
-extern uint8_t periode_cycle;
+extern RTC_DATA_ATTR uint8_t periode_cycle;
 extern float Teau, Tint, Text, loi_eau_Tint, T_obj, T_loi_eau;
 
 extern double Consigne, Input, Output;
@@ -166,7 +165,10 @@ extern uint8_t skip_graph;
 extern uint8_t MMCh;
 extern uint8_t  WIFI_CHANNEL;
 extern RTC_DATA_ATTR uint8_t last_wifi_channel; // Mémorisation du canal Wifi en DeepSleep
-extern uint8_t reset_deep_sleep;  // 0:cold reset  1:reset apres deep sleep
+extern uint8_t rtc_valid;  // 0:cold reset  1:reset apres deep sleep
+extern RTC_DATA_ATTR uint16_t cpt_cycle_batt; // Compteur cycles pour mesure batterie
+extern volatile uint8_t ackReceived;  // global pour indiquer que le peer a acké
+extern volatile int ackChannel;       // canal où ça a marché
 
 extern planning_t plan[];
 extern uint16_t forcage_horaire;

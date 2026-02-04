@@ -24,7 +24,9 @@ uint8_t Mode_Fixe;
 uint8_t ch_arret, chaudiere;
 unsigned long last_chaudiere_change = 0;
 
-char mac_chaudiere[40]="";   // B0:CB:D8:E9:0C:74  adresse mac esp_chaudiere
+RTC_DATA_ATTR uint8_t mac_chaudiere[6];   // B0:CB:D8:E9:0C:74  adresse mac esp_chaudiere
+volatile uint8_t ackReceived = false;  // global pour indiquer que le peer a acké
+volatile int ackChannel = -1;       // canal où ça a marché
 
 PID myPID(&Input, &Output, &Consigne, Kp, Ki, Kd, DIRECT);
 
@@ -134,6 +136,8 @@ void setup_0()
 void setup_nvs()
 {
 
+  if (!rtc_valid)  // si le domaine RAM RTC est valide, on ne recharge pas les valeurs de l'eeprom 
+  {
     // periode du cycle : lecture Temp ext par internet
     periode_cycle = preferences_nvs.getUChar("cycle", 0);  // de 10 a 120
     if ((periode_cycle < 10) || (periode_cycle > 120)) {
@@ -153,6 +157,33 @@ void setup_nvs()
     else
       Serial.printf("Mode rapide : %i\n\r", mode_rapide);
 
+    #ifdef ESP_THERMOMETRE
+      // Initialisation variable adresse Mac chaudiere
+      String storedString = preferences_nvs.getString("MacC", "");
+
+      if (parseMacString(storedString.c_str(), mac_chaudiere))
+      {
+        Serial.printf("MAC chaudiere : %02X:%02X:%02X:%02X:%02X:%02X\n",
+          mac_chaudiere[0], mac_chaudiere[1], mac_chaudiere[2],
+          mac_chaudiere[3], mac_chaudiere[4], mac_chaudiere[5] );
+      }
+      else {  Serial.println("MAC chaudière absente ou invalide");  }
+
+
+      // Initialisation du channel préférentiel wifi-esp-now
+      WIFI_CHANNEL = preferences_nvs.getUChar("WifiC", 0);
+      if ((WIFI_CHANNEL < 1) || (WIFI_CHANNEL > 13)) {
+        WIFI_CHANNEL = 6;  // 1 à 13
+        preferences_nvs.putUChar("WifiC", WIFI_CHANNEL);
+        Serial.printf("Raz Wifi Channel: %i\n", WIFI_CHANNEL);
+      }
+      else
+        Serial.printf("Wifi channel preferentiel: %i\n", WIFI_CHANNEL);
+      last_wifi_channel = WIFI_CHANNEL;
+
+    #endif
+
+  }
 
   #ifndef ESP_THERMOMETRE
 
@@ -380,26 +411,6 @@ void setup_nvs()
       }
     #endif  // Fin ESP_chaudiere
 
-    #ifdef ESP_THERMOMETRE
-      // Initialisation variable adresse Mac chaudiere
-      String storedString = preferences_nvs.getString("MacC", "");
-      if ((storedString.length() < 40) && (storedString.length() > 3)) {
-        storedString.toCharArray(mac_chaudiere, sizeof(mac_chaudiere));
-        Serial.printf("Adresse MAc Chaudiere : %s\n\r", mac_chaudiere);
-      }
-
-      // Initialisation du channel préférentiel wifi-esp-now
-      WIFI_CHANNEL = preferences_nvs.getUChar("WifiC", 0);
-      if ((WIFI_CHANNEL < 1) || (WIFI_CHANNEL > 13)) {
-        WIFI_CHANNEL = 6;  // 1 à 13
-        preferences_nvs.putUChar("WifiC", WIFI_CHANNEL);
-        Serial.printf("Raz Wifi Channel: %i\n", WIFI_CHANNEL);
-      }
-      else
-        Serial.printf("Wifi channel preferentiel: %i\n", WIFI_CHANNEL);
-      if (!reset_deep_sleep) last_wifi_channel = WIFI_CHANNEL;
-
-    #endif
 
 }
 
@@ -441,6 +452,8 @@ void setup_1()
       Tint_err = 7;
     }
     if (Tint_err) log_erreur(Code_erreur_Tint, Tint_err, 0);
+    else
+      Serial.printf("Temp int:%.2f\n\r", Tint);
   #endif
 }
 
@@ -1137,11 +1150,23 @@ uint8_t requete_Get_String_appli(uint8_t type, String var, char *valeur)
   if (paramV == 11)  // registre 11 : adresse MAC ESP_Chaudiere
   {
     res = 0;
-    strncpy(valeur, mac_chaudiere, 25);
-    valeur[25] = '\0';
+    snprintf(valeur, 18,
+           "%02X:%02X:%02X:%02X:%02X:%02X",
+           mac_chaudiere[0], mac_chaudiere[1], mac_chaudiere[2],
+           mac_chaudiere[3], mac_chaudiere[4], mac_chaudiere[5]);
   }
 
   return res;
+}
+
+uint8_t parseMacString(const char* str, uint8_t mac[6]) {
+  int v[6];
+  if (sscanf(str, "%x:%x:%x:%x:%x:%x",
+             &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) != 6) {
+    return false;
+  }
+  for (int i = 0; i < 6; i++) mac[i] = (uint8_t)v[i];
+  return true;
 }
 
 uint8_t requete_Set_String_appli(int param, const char *texte)
@@ -1151,10 +1176,15 @@ uint8_t requete_Set_String_appli(int param, const char *texte)
 
     if (param == 11)  // registre 11 : adresse Mac chaudiere
     {
-      res = 0;
-      preferences_nvs.putString("MacC", texte);
-      strncpy(mac_chaudiere, texte, sizeof(mac_chaudiere) - 1);
-      ip_websocket[sizeof(mac_chaudiere) - 1] = '\0';  // Assure la terminaison
+      if (!parseMacString(texte, mac_chaudiere))
+      {
+          Serial.println("MAC chaudière invalide");
+      }
+      else
+      {
+        preferences_nvs.putString("MacC", texte);
+        res = 0;
+      }
     }
 
   return res;
@@ -1310,188 +1340,6 @@ void event_mesure_temp()  // toutes les 15 minutes : modif allumage chaudiere
 {
   uint8_t i;
 
-    #ifdef ESP_THERMOMETRE
-    // --- MODE THERMOMETRE DISTANT (ESP-NOW) ---
-    uint8_t Tint_erreur = lecture_Tint(&Tint);  // Mesure locale
-    if (Tint_erreur) Tint=50;
-
-    
-    // Initialisation WiFi en mode Station (nécessaire pour ESP-NOW)
-    WiFi.mode(WIFI_STA);
-    WiFi.disconnect();
-
-    if (esp_now_init() != ESP_OK) {
-      Serial.println("Error initializing ESP-NOW");
-      ESP.restart();
-    }
-
-    // Préparation du Peer (Chaudière)
-    esp_now_peer_info_t peerInfo;
-    memset(&peerInfo, 0, sizeof(peerInfo)); // Initialisation complète à zéro
-    memcpy(peerInfo.peer_addr, MAC_CHAUDIERE, 6);
-    peerInfo.channel = 0; // Le canal sera défini avant l'ajout
-    peerInfo.encrypt = false;
-    peerInfo.ifidx = WIFI_IF_STA; // Interface WiFi Station (OBLIGATOIRE)
-
-    // 🚀 OPTION 1 : Forcer le canal connu (plus rapide et économe en énergie)
-    // Si vous connaissez le canal de votre routeur, décommentez ces lignes :
-    /*
-    Serial.printf("🎯 Forçage canal %d (défini dans variables.h)\n", WIFI_CHANNEL);
-    esp_wifi_set_promiscuous(true);
-    esp_wifi_set_channel(WIFI_CHANNEL, WIFI_SECOND_CHAN_NONE);
-    esp_wifi_set_promiscuous(false);
-    last_wifi_channel = WIFI_CHANNEL; // Pour la prochaine fois
-    */
-
-    // 🔍 OPTION 2 : Scan robuste des canaux (si le canal n'est pas connu ou change)
-    bool deliverySuccess = false;
-    uint8_t channels_to_try[14];
-    int nb_trials = 0;
-    
-    // Logique de priorité intelligente :
-    // 1. Si last_wifi_channel a déjà fonctionné ET est différent de WIFI_CHANNEL
-    //    → Essayer last_wifi_channel en premier (il a plus de chances de marcher)
-    // 2. Sinon, essayer WIFI_CHANNEL en premier
-    // 3. Puis essayer l'autre
-    // 4. Enfin, scanner tous les autres canaux
-    
-    if (last_wifi_channel > 0 && last_wifi_channel != WIFI_CHANNEL) {
-      // Cas 1 : last_wifi_channel est différent de WIFI_CHANNEL
-      channels_to_try[nb_trials++] = last_wifi_channel;  // Priorité 1 : dernier qui a marché
-      channels_to_try[nb_trials++] = WIFI_CHANNEL;       // Priorité 2 : canal configuré
-      Serial.printf("🔍 Priorité: canal %d (dernier OK), puis %d (configuré)\n", 
-                    last_wifi_channel, WIFI_CHANNEL);
-    } else {
-      // Cas 2 : last_wifi_channel == WIFI_CHANNEL ou non initialisé
-      channels_to_try[nb_trials++] = WIFI_CHANNEL;       // Priorité 1 : canal configuré
-      Serial.printf("🔍 Priorité: canal %d (configuré)\n", WIFI_CHANNEL);
-    }
-    
-    // Remplissage des autres canaux (1-13)
-    for (int c = 1; c <= 13; c++) {
-      // Éviter les doublons
-      bool already_added = false;
-      for (int i = 0; i < nb_trials; i++) {
-        if (channels_to_try[i] == c) {
-          already_added = true;
-          break;
-        }
-      }
-      if (!already_added) {
-        channels_to_try[nb_trials++] = c;
-      }
-    }
-
-    Serial.printf("🔍 Scan de %d canaux (priorité: canal %d)\n", nb_trials, last_wifi_channel);
-
-    for (int k = 0; k < nb_trials; k++) {
-      int current_channel = channels_to_try[k];
-      
-      // Fixer le canal
-      Serial.printf("\n--- Essai canal %d ---\n", current_channel);
-      esp_wifi_set_promiscuous(true);
-      esp_wifi_set_channel(current_channel, WIFI_SECOND_CHAN_NONE);
-      esp_wifi_set_promiscuous(false);
-      
-      // Vérifier que le canal a bien été changé
-      uint8_t actual_channel;
-      wifi_second_chan_t second;
-      esp_wifi_get_channel(&actual_channel, &second);
-      
-      if (actual_channel != current_channel) {
-        Serial.printf("⚠️ Échec changement canal (demandé:%d, actuel:%d)\n", current_channel, actual_channel);
-        delay(50); // Attendre un peu plus
-        esp_wifi_set_channel(current_channel, WIFI_SECOND_CHAN_NONE);
-        esp_wifi_get_channel(&actual_channel, &second);
-        Serial.printf("   2ème tentative: canal actuel=%d\n", actual_channel);
-      } else {
-        Serial.printf("✅ Canal changé: %d\n", actual_channel);
-      }
-      
-      delay(50); // Délai pour stabilisation du canal
-
-      // Ajouter le peer sur ce canal
-      if (esp_now_is_peer_exist(MAC_CHAUDIERE)) {
-        esp_now_del_peer(MAC_CHAUDIERE);
-      }
-      peerInfo.channel = actual_channel; // Utiliser le canal réel
-      if (esp_now_add_peer(&peerInfo) != ESP_OK){
-        Serial.println("❌ Échec ajout peer");
-        continue;
-      }
-      Serial.println("✅ Peer ajouté");
-
-      // Envoi Température
-      Message_EspNow message;
-      message.type = 1; // Température
-      message.value = Tint;
-      
-      // 🔍 DIAGNOSTIC: Afficher les infos avant envoi
-      Serial.printf("📤 Tentative envoi sur canal %d vers MAC: %02X:%02X:%02X:%02X:%02X:%02X\n",
-                    actual_channel,
-                    MAC_CHAUDIERE[0], MAC_CHAUDIERE[1], MAC_CHAUDIERE[2],
-                    MAC_CHAUDIERE[3], MAC_CHAUDIERE[4], MAC_CHAUDIERE[5]);
-      Serial.printf("   Message: Type=%d, Valeur=%.2f°C\n", message.type, message.value);
-      
-      esp_err_t result = esp_now_send(MAC_CHAUDIERE, (uint8_t *) &message, sizeof(message));
-
-      if (result == ESP_OK) {
-        Serial.printf("Envoye sur canal %d\n", actual_channel);
-        
-        // 🔔 Détection de changement de canal
-        if (last_wifi_channel > 0 && last_wifi_channel != actual_channel) {
-          Serial.println("\n⚠️ ========================================");
-          Serial.printf("⚠️  CHANGEMENT DE CANAL DÉTECTÉ !\n");
-          Serial.printf("⚠️  Ancien canal: %d → Nouveau canal: %d\n", last_wifi_channel, actual_channel);
-          Serial.println("⚠️  Le routeur WiFi a probablement changé de canal");
-          Serial.println("⚠️ ========================================\n");
-          log_erreur(Code_erreur_wifi, last_wifi_channel, actual_channel); // Log du changement
-        }
-        
-        last_wifi_channel = actual_channel; // Mémoriser pour la prochaine fois
-        deliverySuccess = true; 
-        
-        // Envoi tension batterie tous les 100 cycles
-        cpt_cycle_batt++;
-        if (cpt_cycle_batt >= 100) {
-          float Vbatt = readBatteryVoltage();
-          delay(50);
-          message.type = 2; // Batterie
-          message.value = Vbatt;
-          esp_now_send(MAC_CHAUDIERE, (uint8_t *) &message, sizeof(message));
-          Serial.printf("Envoi batterie: %.2fV (cycle %d)\n", Vbatt, cpt_cycle_batt);
-          cpt_cycle_batt = 0; // Réinitialiser le compteur
-        }
-        
-        break; // On arrête le scan dès qu'un envoi réussit
-      } else {
-        // Échec d'envoi : supprimer le peer avant d'essayer le canal suivant
-        esp_now_del_peer(MAC_CHAUDIERE);
-      }
-      delay(20); 
-    }
-    
-    // Vérification du résultat de l'envoi
-    if (!deliverySuccess) {
-      Serial.println("ERREUR: Echec envoi ESP-NOW sur tous les canaux");
-      log_erreur(Code_erreur_esp_now, 10, 0); // Code erreur ESP-NOW
-    } else {
-      Serial.printf("Succes envoi ESP-NOW (canal %d)\n", last_wifi_channel);
-    }
-    
-    // Deep Sleep
-    Serial.println("Go to Deep Sleep"); // consomme du temps
-    Serial.flush(); 
-    delay(20); 
-
-    uint64_t sleep_time = (uint64_t)periode_cycle * 60 * 1000000;
-    if (mode_rapide==12)
-    sleep_time = (uint64_t)periode_cycle * 1000000;
-    esp_sleep_enable_timer_wakeup(sleep_time);
-    esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_REVEIL, 0); // Réveil par bouton (0 = bas)
-    esp_deep_sleep_start();
-  
-  #endif
 
 
   #ifdef ESP_CHAUDIERE
@@ -1591,3 +1439,156 @@ void OnDataRecv(const esp_now_recv_info_t * info, const uint8_t *incomingData, i
   }
 }
 #endif
+
+
+// Sonde de temperature envoie valeur de temp à la chaudiere par ESP_now
+void envoi_temp_esp_chaudiere()
+{
+    // --- MODE THERMOMETRE DISTANT (ESP-NOW) ---
+    uint8_t Tint_erreur = lecture_Tint(&Tint);  // Mesure locale
+    if (Tint_erreur) Tint=25;
+
+    
+    // Initialisation WiFi en mode Station (nécessaire pour ESP-NOW)
+    WiFi.mode(WIFI_STA);
+    WiFi.disconnect();
+
+    if (esp_now_init() != ESP_OK) {
+      Serial.println("Error initializing ESP-NOW");
+      ESP.restart();
+    }
+
+    esp_now_register_send_cb(OnDataSent);
+
+    // Préparation du Peer (Chaudière)
+    esp_now_peer_info_t peerInfo;
+    memset(&peerInfo, 0, sizeof(peerInfo)); // Initialisation complète à zéro
+    memcpy(peerInfo.peer_addr, MAC_CHAUDIERE, 6);
+    peerInfo.channel = 0; // Le canal sera défini avant l'ajout
+    peerInfo.encrypt = false;
+    peerInfo.ifidx = WIFI_IF_STA; // Interface WiFi Station (OBLIGATOIRE)
+
+    // 🚀 OPTION 1 : Forcer le canal connu (plus rapide et économe en énergie)
+    // Si vous connaissez le canal de votre routeur, décommentez ces lignes :
+    /*
+    Serial.printf("🎯 Forçage canal %d (défini dans variables.h)\n", WIFI_CHANNEL);
+    esp_wifi_set_promiscuous(true);
+    esp_wifi_set_channel(WIFI_CHANNEL, WIFI_SECOND_CHAN_NONE);
+    esp_wifi_set_promiscuous(false);
+    last_wifi_channel = WIFI_CHANNEL; // Pour la prochaine fois
+    */
+
+    // 🔍 OPTION 2 : Scan robuste des canaux (si le canal n'est pas connu ou change)
+
+    Serial.printf("🔍 Scan de 13 canaux (priorité: canal %d)\n", last_wifi_channel);
+    uint8_t deliverySuccess = false;
+
+    for (int k = 0; k < 13; k++)
+    {
+      int current_channel = k + last_wifi_channel;
+      if (current_channel > 12) current_channel -= 13;
+      
+      // Fixer le canal
+      Serial.printf("\n--- Essai canal %d ---\n", current_channel);
+      esp_wifi_set_promiscuous(true);
+      esp_wifi_set_channel(current_channel, WIFI_SECOND_CHAN_NONE);
+      esp_wifi_set_promiscuous(false);
+      
+      // Vérifier que le canal a bien été changé
+      uint8_t actual_channel;
+      wifi_second_chan_t second;
+      esp_wifi_get_channel(&actual_channel, &second);
+      
+      if (actual_channel != current_channel) {
+        Serial.printf("⚠️ Échec changement canal (demandé:%d, actuel:%d)\n", current_channel, actual_channel);
+        delay(50); // Attendre un peu plus
+        esp_wifi_set_channel(current_channel, WIFI_SECOND_CHAN_NONE);
+        esp_wifi_get_channel(&actual_channel, &second);
+        Serial.printf("   2ème tentative: canal actuel=%d\n", actual_channel);
+      } else {
+        Serial.printf("✅ Canal changé: %d\n", actual_channel);
+      }
+      
+      delay(50); // Délai pour stabilisation du canal
+
+      // Ajouter le peer sur ce canal
+      if (esp_now_is_peer_exist(MAC_CHAUDIERE)) {
+        esp_now_del_peer(MAC_CHAUDIERE);
+      }
+      peerInfo.channel = actual_channel; // Utiliser le canal réel
+      if (esp_now_add_peer(&peerInfo) != ESP_OK){
+        Serial.println("❌ Échec ajout peer");
+        continue;
+      }
+      Serial.println("✅ Peer ajouté");
+
+      // Envoi Température
+      Message_EspNow message;
+      message.type = 1; // Température
+      message.value = Tint;
+      
+      // 🔍 DIAGNOSTIC: Afficher les infos avant envoi
+      Serial.printf("📤 Tentative envoi sur canal %d vers MAC: %02X:%02X:%02X:%02X:%02X:%02X\n",
+                    actual_channel,
+                    MAC_CHAUDIERE[0], MAC_CHAUDIERE[1], MAC_CHAUDIERE[2],
+                    MAC_CHAUDIERE[3], MAC_CHAUDIERE[4], MAC_CHAUDIERE[5]);
+      Serial.printf("   Message: Type=%d, Valeur=%.2f°C\n", message.type, message.value);
+      
+      ackReceived=0;
+      ackChannel = -1;
+      esp_err_t result = esp_now_send(MAC_CHAUDIERE, (uint8_t *) &message, sizeof(message));
+
+      if (result == ESP_OK)
+      {
+        Serial.printf("Envoye sur canal %d\n", actual_channel);
+
+        // attendre la réponse max 100 ms
+        int wait = 0;
+        while (!ackReceived && wait < 10) { // 10 * 10ms = 100ms
+            delay(10);
+            wait++;
+        }
+
+        if (ackReceived) // canal trouvé
+        {
+          deliverySuccess = true; 
+          if (last_wifi_channel != actual_channel)
+          {
+            last_wifi_channel = actual_channel;
+          }
+          break;
+        }
+      }
+    }
+
+    if (deliverySuccess)
+    {   
+      // Envoi tension batterie tous les 100 cycles
+      cpt_cycle_batt++;
+      if (cpt_cycle_batt >= 100)
+      {
+        float Vbatt = readBatteryVoltage();
+        delay(50);
+        Message_EspNow message;
+        message.type = 2; // Batterie
+        message.value = Vbatt;
+        esp_now_send(MAC_CHAUDIERE, (uint8_t *) &message, sizeof(message));
+        Serial.printf("Envoi batterie: %.2fV (cycle %d)\n", Vbatt, cpt_cycle_batt);
+        cpt_cycle_batt = 0; // Réinitialiser le compteur
+      }
+    }
+    
+    // Deep Sleep
+      Serial.println("Go to Deep Sleep"); // consomme du temps
+      Serial.flush(); 
+      delay(20); 
+
+      uint64_t sleep_time = (uint64_t)periode_cycle * 60 * 1000000;
+      if (mode_rapide==12)
+      sleep_time = (uint64_t)periode_cycle * 1000000;
+      esp_sleep_enable_timer_wakeup(sleep_time);
+      esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_REVEIL, 0); // Réveil par bouton (0 = bas)
+      esp_deep_sleep_start();
+}
+
+

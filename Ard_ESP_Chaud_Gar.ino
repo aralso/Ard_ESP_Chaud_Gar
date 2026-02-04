@@ -136,6 +136,9 @@ uint8_t err_wifi_repet;  // permet de resetter si le wifi ne se rétablit pas au
 uint8_t init_masquage=1;
 uint8_t cpt24h_batt=6;
 
+void envoi_temp_esp_chaudiere();
+uint8_t parseMacString(const char* str, uint8_t mac[6]);
+
 // variable globale de 4000c en RAM pour dump log et autres requetes
 #define MAX_DUMP 5500  // 1050 car par graphique
 char buffer_dmp[MAX_DUMP];  // max 250 logs, 16 octets chacun
@@ -212,10 +215,10 @@ unsigned long last_remote_temp_time = 0;
 int16_t  graphique [NB_Val_Graph][NB_Graphique];
 
 // Status
-RTC_DATA_ATTR uint16_t val_sentinelle = 0x62F3;
-uint8_t reset_deep_sleep;  // 0:cold reset  1:reset apres deep sleep
-RTC_DATA_ATTR uint16_t nb_err_reseau=0;
-RTC_DATA_ATTR uint16_t cpt_cycle_batt=0; // Compteur cycles pour mesure batterie
+RTC_DATA_ATTR uint32_t rtc_magic = 0xDEADBEEF;
+uint8_t rtc_valid;  // 0:non valide-cold reset  1:reset apres deep sleep : RTC valide
+uint16_t nb_err_reseau=0;
+RTC_DATA_ATTR uint16_t cpt_cycle_batt; // Compteur cycles pour mesure batterie
 uint16_t erreur_queue=0;
 uint8_t num_err_queue[5];
 uint8_t cpt_init=0;
@@ -244,10 +247,10 @@ const int daylightOffset_sec = 3600 * 1;  // heure d'été
 struct tm timeinfo;
 time_t now;
 uint8_t init_time = 0;  // 0:pas initialisé, 1:à8h, 3:avec internet
-RTC_DATA_ATTR uint8_t last_wifi_channel = 6; // Mémorisation du canal Wifi en DeepSleep
+RTC_DATA_ATTR uint8_t last_wifi_channel; // Mémorisation du canal Wifi en DeepSleep
 float Vbatt_Th = 0.0;   // Stockage tension batterie distante
 
-uint8_t periode_cycle=15;
+RTC_DATA_ATTR uint8_t periode_cycle;
 
 
 //Freertos
@@ -271,8 +274,8 @@ Preferences preferences_nvs;
 //#define PAGE_1_START 0     // Début de la première page
 //#define PAGE_2_START 4096  // Début de la deuxième page
 
-RTC_DATA_ATTR uint8_t activePage=0;  // 0: non defini  1 ou 2
-RTC_DATA_ATTR uint16_t activeIndex=0;  // 0:non défini
+uint8_t activePage=0;  // 0: non defini  1 ou 2
+uint16_t activeIndex=0;  // 0:non défini
 
 
 #define MSG_SIZE 40
@@ -314,7 +317,7 @@ TimerHandle_t xTimer_Securite;
 
 WiFiClient client;
 
-uint8_t mode_rapide;
+RTC_DATA_ATTR uint8_t mode_rapide;
 
 uint16_t nb_reset;
 uint32_t time_reset0;  // temps lors du precedent reset
@@ -325,8 +328,8 @@ uint8_t etat_connect_ethernet = 0;
 AsyncWebServer server(80);
 
 uint8_t cycle24h;
-RTC_DATA_ATTR float  tempI_moy24h=0, tempE_moy24h=0;
-RTC_DATA_ATTR uint8_t cpt24_Tint=0, cpt24_Text=0;
+float  tempI_moy24h=0, tempE_moy24h=0;
+uint8_t cpt24_Tint=0, cpt24_Text=0;
 
 #define DEBOUNCE_INTERVAL 300  // Temps anti-rebond en ms
 #define VALIDATION_COUNT 10  // Nombre de lectures consécutives pour valider un changement
@@ -968,6 +971,17 @@ void taskHandler(void *parameter) {
     } // fin du while
 }
 
+// initi des variables RTC, lors d'un cold Reset
+void init_rtc_variables()
+{
+  cpt_cycle_batt = 0;
+}
+
+void init_ram_variables()
+{
+
+}
+
 void setup()
 {
   
@@ -976,22 +990,31 @@ void setup()
   resetReason0 = (uint8_t) esp_reset_reason();
   Serial.begin(115200);
   
-  // Cause réveil :
+  // Cause réveil du deep/light_sleep (undefined si pas de reveil deep/light sleep)
   esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
   if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0) {
     force_stay_awake = true; // Réveil par bouton : on reste éveillé pour l'UART
     wake_up_time = millis();
     Serial.println("\n*** RÉVEIL PAR BOUTON : Mode configuration UART actif pour 30s ***");
   }
+
   strncpy(resetREASON0, verbose_reset_reason(resetReason0), sizeof(resetREASON0) - 1);
   resetREASON0[sizeof(resetREASON0) - 1] = '\0'; // Garantit la terminaison null
 
-  reset_deep_sleep = 1;
-  if (val_sentinelle == 0x62F3) 
+  // determination si la RTC reste valide (apres un reveil deepsleep)
+  if (rtc_magic != 0x05343211 )  
   {
-    val_sentinelle = 0x1234;
-    reset_deep_sleep = 0;  
+    // RTC non valide = cold reset
+    rtc_valid = 0;
+    init_rtc_variables(); // initialisation des variables RTC, la ram normale est mise à 0
+    rtc_magic = 0x5343211;
   }
+  else
+  {
+    // RTC valide : hot reset (sortie deepsleep,watchdog, soft reset,..)
+    rtc_valid = 1;
+  }
+  init_ram_variables(); // RTC conservé. initialisation de la ram normale (aléatoire)
 
   // Optimisation processeur : autorise le processeur à s'arrêter si inactif
   /*esp_pm_config_esp32_t pm_config = {
@@ -1049,9 +1072,8 @@ void setup()
   dernier_fct=0;
   last_remote_temp_time = millis();
 
-  Serial.println(" ");
-  Serial.print("Initialisation - reset:");
-  Serial.println(resetReason0);
+  Serial.printf("**** Initialisation - reset: %s sleep:%i\n\r",resetREASON0, wakeup_reason );
+  //Serial.println(resetReason0);
   //Serial.print("-");
   //Serial.println(resetReason1);
 
@@ -1081,8 +1103,8 @@ void setup()
   // Configurer l'interruption GPIO sur GPIO 18 (ex: bouton poussoir)
   //pinMode(18, INPUT_PULLUP);
   //attachInterrupt(digitalPinToInterrupt(18), onGPIO, FALLING);
-    pinMode(PIN_REVEIL, INPUT_PULLUP); // Bouton de réveil / Wifi_AP au démarrage
     pinMode(BTN_PIN[0], INPUT_PULLUP);
+    pinMode(PIN_REVEIL, INPUT_PULLUP); // Thermometre : Bouton de réveil / Wifi_AP au démarrage
     /*pinMode(BTN_PIN[1], INPUT_PULLUP);
     pinMode(BTN_PIN[2], INPUT_PULLUP);
     pinMode(BTN_PIN[3], INPUT_PULLUP);
@@ -1229,36 +1251,37 @@ void setup()
     }
   }
 
-  //lecture websocket ws://webcam.hd.free.fr:8081
-  // lecture id websocket
-  websocket_on = preferences_nvs.getUChar("WSOn", 0);
-  if (websocket_on!=1 && websocket_on!=2)
-  {
-    websocket_on=1;
-    preferences_nvs.putUChar("WSOn", 1);
-    Serial.printf("New websocket OFF : %i\n\r", websocket_on);
-  }
-  else
-    Serial.printf("websocket ON : %i\n\r", websocket_on);
-
-  //if (websocket_on==2)
-  //{
-    storedString = preferences_nvs.getString("WSock", "");
-    if ((storedString.length() < 40) && (storedString.length() > 3)) {
-      storedString.toCharArray(ip_websocket, sizeof(ip_websocket));
-      Serial.printf("websocket : %s\n\r", ip_websocket);
-    }
+  #ifndef Sans_websocket
+    //lecture websocket ws://webcam.hd.free.fr:8081
     // lecture id websocket
-    id_websocket = preferences_nvs.getUChar("WSId", 0);
-    if (!id_websocket || id_websocket>=10)
+    websocket_on = preferences_nvs.getUChar("WSOn", 0);
+    if (websocket_on!=1 && websocket_on!=2)
     {
-      id_websocket=9;
-      preferences_nvs.putUChar("WSId", id_websocket);
-      Serial.printf("New Id websocket : %i\n\r", id_websocket);
+      websocket_on=1;
+      preferences_nvs.putUChar("WSOn", 1);
+      Serial.printf("New websocket OFF : %i\n\r", websocket_on);
     }
     else
-      Serial.printf("Id websocket : %i\n\r", id_websocket);
+      Serial.printf("websocket ON : %i\n\r", websocket_on);
 
+    //if (websocket_on==2)
+    //{
+      storedString = preferences_nvs.getString("WSock", "");
+      if ((storedString.length() < 40) && (storedString.length() > 3)) {
+        storedString.toCharArray(ip_websocket, sizeof(ip_websocket));
+        Serial.printf("websocket : %s\n\r", ip_websocket);
+      }
+      // lecture id websocket
+      id_websocket = preferences_nvs.getUChar("WSId", 0);
+      if (!id_websocket || id_websocket>=10)
+      {
+        id_websocket=9;
+        preferences_nvs.putUChar("WSId", id_websocket);
+        Serial.printf("New Id websocket : %i\n\r", id_websocket);
+      }
+      else
+        Serial.printf("Id websocket : %i\n\r", id_websocket);
+    #endif // fin sans_websocket
 
 
     // Initialisation variable skip graph
@@ -1274,6 +1297,13 @@ void setup()
   setup_nvs();
 
   // Fin lecture nvs -----------------------------
+
+  #ifdef ESP_THERMOMETRE
+    if (!force_stay_awake)  // n'envoie pas la temp à chaudiere si reveil par PIN_REVEIL
+    {
+      envoi_temp_esp_chaudiere();
+    }
+  #endif
 
   // Recherche de la partition "log_flash" custom
   logPartition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, (esp_partition_subtype_t)0x99, "log_flash");
@@ -1483,11 +1513,6 @@ void setup()
   #endif // No_reseau
 
 
-  #ifdef ESP_THERMOMETRE
-    // Pour le mode thermomètre, on déclenche la mesure et le sommeil immédiatement après le setup
-    //Serial.println("Déclenchement mesure initiale...");
-    event_mesure_temp();
-  #endif
 
   // Reset final du watchdog après la configuration réseau
   #ifdef WatchDog
@@ -3504,7 +3529,7 @@ void loop()
 
   //Serial.printf("loop - secu:%d\n\r", cpt_securite);
   //vTaskDelay(temps_boucle_loop*1000 / portTICK_PERIOD_MS); // Petite pause
-  vTaskDelay(30 / portTICK_PERIOD_MS); // Petite pause
+  vTaskDelay(300 / portTICK_PERIOD_MS); // Petite pause
 
 }
 
@@ -4119,4 +4144,11 @@ uint16_t decod_asc16 (uint8_t * index)
 				val |= ((car-'A'+10)<<(i*4));
 	}
 	return val;
+}
+
+void OnDataSent(const wifi_tx_info_t *info, esp_now_send_status_t status) {
+    if (status == ESP_NOW_SEND_SUCCESS) {
+        ackReceived = true;
+        ackChannel = WiFi.channel();  // canal courant
+    }
 }
