@@ -1,6 +1,8 @@
 /* 
 
 TODO : traiter panne routeur => arret esp_now
+    au démarrage, si pas de réseau : méthode de regul ?
+    
 
 v1.4 02/2026 esp_now
 v1.3 02/2026 OTA, ajout esp32_thermometre, mesure Text par internet
@@ -24,8 +26,8 @@ Configuration des options de programmation :
 - usb mode : hardware cdc & jtag (usage basique)
 */
 
-//#define ESP_CHAUDIERE      // Rôle principal : gestion de la chaudière
-#define ESP_THERMOMETRE  // Rôle distant : sonde de température
+#define ESP_CHAUDIERE      // Rôle principal : gestion de la chaudière
+//#define ESP_THERMOMETRE  // Rôle distant : sonde de température
 
 // Hardware
 //#define MODE_WT32  // WT32-Eth01 sinon ESP32-CAM ou DOIT ESP32 Devkit V1
@@ -45,12 +47,11 @@ Configuration des options de programmation :
   #define ESP32_v1    // DOIT ESP32 DEVKIt V1  sinon ESP32_S3
   #define MODE_Wifi  // Wifi sinon Ethernet
   #define Sans_websocket
-  #define Sans_securite
+  //#define Sans_securite
   #ifdef DEBUG   // debug
-    #define Sans_securite
+
   #else   // ops
     #define WatchDog
-
   #endif
 
 #endif
@@ -79,7 +80,7 @@ Configuration des options de programmation :
 // Debug Level from 0 to 4
 #define _ETHERNET_WEBSERVER_LOGLEVEL_ 1
 
-#define temps_boucle_loop  1   // secondes
+#define temps_boucle_loop  30   // secondes
 #define attente_init     10     // 10 secondes avant de demasquer les entrées
 #define attente_mise_heure  30  // 30 secondes apres le temps d'init ci-dessus pour verifier/maj l'heure
 
@@ -313,6 +314,8 @@ TimerHandle_t xTimer_24H;
 TimerHandle_t xTimer_Cycle;
 //TimerHandle_t xTimer_Compresseur;
 TimerHandle_t xTimer_Securite;
+TimerHandle_t xTimer_activ_chaud;
+
 
 
 WiFiClient client;
@@ -375,6 +378,7 @@ uint8_t index_val;
 // heure ESP32
 uint8_t an, ms, jM, jS, hr, mn, sd;
 float heure;
+uint16_t date_ac;
 char heure_string[16] = "\"\"";
 int periode_lecture_heure = 5;  // init :5 secondes  ensuite:30 sec
 
@@ -575,6 +579,20 @@ void vTimerWatchdogCallback(TimerHandle_t xTimer)
       erreur_queue++;
     }
 }
+
+// timeout pour activ chaudiere
+void vTimerMarChaudCallback(TimerHandle_t xTimer)
+{
+  systeme_eve_t evt = { EVENT_ACTIV_CHAUD, 0};
+  if (xQueueSendFromISR(eventQueue, &evt, NULL) != pdTRUE) 
+    {
+      if (erreur_queue<5) num_err_queue[erreur_queue]=5;
+      erreur_queue++;
+    }
+}
+
+
+
 
 // timer debounce pour lire toutes les entrées
 void IRAM_ATTR onButtonInterrupt() {
@@ -778,6 +796,10 @@ void taskHandler(void *parameter) {
                   }                  
                   break;
                 }
+                case EVENT_ACTIV_CHAUD: {
+                  maj_etat_chaudiere();
+                  break;
+                }
  
                 case EVENT_GPIO_OFF:  // 0:Defaut secteur, 1:intrusion, 2:autoprotect, 3:marche/arret
                     //Serial.printf("GPIO:defaut secteur =>timer:%i\n\r", evt.data);
@@ -979,7 +1001,9 @@ void init_rtc_variables()
 
 void init_ram_variables()
 {
-
+  fo_jus=0;
+  Tint=20.0;
+  Text=10.0;
 }
 
 void setup()
@@ -1043,6 +1067,8 @@ void setup()
 
   checkPartitions();
 
+  //  -------  Initialisation Watchdog --------------
+
   #ifdef WatchDog
     esp_task_wdt_deinit();
     esp_task_wdt_config_t wdt_config = {
@@ -1077,9 +1103,11 @@ void setup()
   //Serial.print("-");
   //Serial.println(resetReason1);
 
-  setup_0();
+
+  setup_0();   //  --- valeur initiales des graphiques
 
 
+  // ---------  Creation des taches et des queues -------------------
 
   // Création de la queue sequenceur (stocke max 10 événements de type int)
   eventQueue = xQueueCreate(50, sizeof(systeme_eve_t));
@@ -1098,7 +1126,8 @@ void setup()
     xTaskCreate(uart1Task, "UART1Task", 8192, NULL, 3, NULL);  // priorité 3 plus élevée
   #endif
 
-  // Configuration des sorties
+  // ------  Configuration des PIN sorties       -------------------------------
+
   pinMode(PIN_Chaudiere, OUTPUT);
   // Configurer l'interruption GPIO sur GPIO 18 (ex: bouton poussoir)
   //pinMode(18, INPUT_PULLUP);
@@ -1115,7 +1144,8 @@ void setup()
 
 
 
-  // Initialisation MODBUS
+  // ------   Initialisation MODBUS       --------------
+
   // https://www.modbustools.com/download.html
   #ifdef MODBUS
   //gpio_reset_pin((gpio_num_t)MAX485_RE_NEG);
@@ -1136,6 +1166,8 @@ void setup()
     node.postTransmission(postTransmission);
   #endif  // MODBUS
 
+  // ----- init port Serial 1  ------------
+
   #ifdef STM32
     Serial1.begin(115200, SERIAL_8N1, PIN_RXSTM, PIN_TXSTM); // UART1 = liaison avec l'autre ESP32
     //esp_sleep_enable_uart_wakeup(UART_NUM_1);  
@@ -1143,14 +1175,10 @@ void setup()
 
   
 
-  // NVS Eeprom
-  // cette séquence n'est à lancer que lors d'un nouveau projet/ nouvelle plateforme
-  /*nvs_flash_erase();  // erase the NVS partition
-  nvs_flash_init();   // initialize the NVS partition
-  while(true);*/
+  // ------  NVS Eeprom  ---------------------
+
 
   preferences_nvs.begin("NVS_App", false);
-
 
   // lecture nb de reset en nvs
   nb_reset = preferences_nvs.getUShort("nb_reset", 0);
@@ -1294,9 +1322,13 @@ void setup()
     }
 
 
-  setup_nvs();
+  setup_nvs();  // NVS appli
 
-  // Fin lecture nvs -----------------------------
+
+  setup_1();  // --------------   initialisation sonde temperature------------
+
+
+  // -------------  Sonde : envoie temperature à la chaudiere -------------------
 
   #ifdef ESP_THERMOMETRE
     if (!force_stay_awake)  // n'envoie pas la temp à chaudiere si reveil par PIN_REVEIL
@@ -1305,7 +1337,8 @@ void setup()
     }
   #endif
 
-  // Recherche de la partition "log_flash" custom
+  // -------------- partition "log_flash" custom  pour Write-log -------------------
+
   logPartition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, (esp_partition_subtype_t)0x99, "log_flash");
 
   if (!logPartition) {
@@ -1324,7 +1357,9 @@ void setup()
       delay(500);
     #endif
 
-  // Configuration des timers FreeRTOS (max 49 jours)
+
+  // -------------   Configuration des timers FreeRTOS (max 49 jours)   --------------------
+
   // Timer à l'initialisation pour masquer 10 secondes les envois au transmetteur et init heure, puis 30 sec
   xTimer_Init= xTimerCreate ("Init", (uint32_t)attente_init*(1000/portTICK_PERIOD_MS), pdTRUE, (void *) 0, vTimerInitCallback);
   if (xTimer_Init == NULL)  Serial.println("Erreur : timer xTimer_Init non créé !");
@@ -1368,6 +1403,11 @@ void setup()
   xTimer_Watchdog= xTimerCreate ("Watchdog", (uint32_t)WDT_TIMEOUT*(300/portTICK_PERIOD_MS), pdTRUE, (void *) 0, vTimerWatchdogCallback);
   if (xTimer_Watchdog == NULL)  Serial.println("Erreur : timer xTimer_Watchdog non créé !");
 
+  // Timer de Délai pour activation chaudiere
+  xTimer_activ_chaud= xTimerCreate ("marche_chaud", (uint32_t)1*(300/portTICK_PERIOD_MS), pdFALSE, (void *) 0, vTimerMarChaudCallback);
+  if (xTimer_activ_chaud == NULL)  Serial.println("Erreur : timer xTimer_marche_chaudiere non créé !");
+
+
   #ifdef WatchDog
     esp_task_wdt_reset();
     Serial.println("reset watchdog milieu setup");
@@ -1398,10 +1438,9 @@ void setup()
     xTimerStart(xTimer_Websocket,100);    
   }
 
-  setup_1();
 
 
-  // -------------------- demarrage du reseau
+  // -------------------- demarrage du reseau  ------------------
 
   Serial.printf("mode reseau avant wifi:%i\n\r", mode_reseau);
 
@@ -1478,43 +1517,33 @@ void setup()
       etat_connect_ethernet = 2;
     } else
       Serial.println("pas connecté Ethernet");
+
+    Serial.print(F("HTTP EthernetWebServer is @ IP : "));
+    Serial.println(ETH.localIP());
+
   #endif // wifi
+
+  // Configuration du serveur NTP
+    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+
+    setupRoutes();
+    server.begin();
+
   #endif // No_reseau
 
   printMemoryStatus();
   delay(100);
 
 
+  // ------- changement de frequence CPU -------------------
+
   uint16_t Cpu_freq = getCpuFrequencyMhz();
   setCpuFrequencyMhz(80);
   Serial.printf("CPU Freq: avant:%i  apres:%u\n", Cpu_freq, (unsigned int)getCpuFrequencyMhz());
 
 
-  // On configure le serveur NTP
-  #ifndef ESP_THERMOMETRE
-    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-  #endif
 
-  //uint8_t clock = ledcGetClockSource();  // pour pwm
-  //Serial.printf("clock:%i\n\r",clock);  // Clock=11
-
-  #ifndef NO_RESEAU
-    setupRoutes();
-    server.begin();
-
-
-    #ifdef MODE_Wifi
-
-    #else
-      Serial.print(F("HTTP EthernetWebServer is @ IP : "));
-      Serial.println(ETH.localIP());
-    #endif
-
-  #endif // No_reseau
-
-
-
-  // Reset final du watchdog après la configuration réseau
+  // Redémarrage final du watchdog après la configuration réseau
   #ifdef WatchDog
     esp_task_wdt_reset();
     Serial.println("reset watchdog après configuration réseau");
@@ -1523,10 +1552,10 @@ void setup()
 
   printMemoryStatus();
 
-  setup_2();
+  setup_2();  // Esp_now
 
-// Configuration OTA
-// --- OTA ---
+  // ------------  Configuration OTA -----------------
+
   #ifdef OTA
     ArduinoOTA.setHostname("ESP32S3");
     ArduinoOTA.setPassword("Corail2025");
@@ -1557,7 +1586,7 @@ void setup()
 
     ArduinoOTA.begin();
     Serial.println("OTA prêt");
-  #endif
+  #endif  // fin OTA
 
 
   Serial.println("fin setup:");
@@ -1587,7 +1616,11 @@ void heartBeatPrint()
 
 //************ lecture de l'heure sur ESP32 ************************************
 void lectureHeure() {
-  getLocalTime(&timeinfo);  // attention : à chaque fois : synchro avec serveur NTP. Si pb reseau => 5 à 10 secondes
+  if (!getLocalTime(&timeinfo)) {
+    Serial.println("erreur lecture date_heure");
+    return; // ou gestion d'erreur
+  }
+
   //time_t now = time(nullptr);
   //timeinfo = localtime(&now);
   hr = timeinfo.tm_hour;
@@ -1595,6 +1628,8 @@ void lectureHeure() {
   sd = timeinfo.tm_sec;
   snprintf(heure_string, sizeof(heure_string), "\"%.2d:%.2d:%.2d\"", hr, mn, sd);
   heure = hr + (float)mn / 60 + (float)sd / 3600;
+  int nb_annees = timeinfo.tm_year + 1900 - 2020;
+  date_ac = timeinfo.tm_yday + 365 * nb_annees + (nb_annees + 3) / 4;  // Nombre de jours depuis le 1/1/2020
   //Serial.println(heure_string);
 }
 
@@ -2079,7 +2114,9 @@ uint8_t requete_Set(uint8_t type, const char* param, const char* valStr)
       if ((strcmp(valStr, "Chaud2025") == 0) && (temps < 14000) && (temps > 3000))  // entre 3sec et 14sec
       {
         #ifndef Sans_securite
-          xTimerStart(xTimer_Securite,100);  // permet de couper la securite au bout de 15 minutes
+          xTimerStop(xTimer_Securite,100);
+          xTimerChangePeriod(xTimer_Securite,(uint32_t)15*60*(1000/portTICK_PERIOD_MS),100);
+          xTimerStart(xTimer_Securite,100);  // permet de couper la securite au bout de 2 minutes
         #endif
         cpt_securite = 1;
         Serial.println("Secu actif");
@@ -2696,6 +2733,7 @@ void systeme_activ(uint8_t ordre) {
   }
 }
 
+// type=0:tout  type=1:maj uniquement (sans tableaux)
 void requete_status(char *json_response, uint8_t socket, uint8_t type)
 {
   // Vérification de sécurité du pointeur
@@ -2708,32 +2746,34 @@ void requete_status(char *json_response, uint8_t socket, uint8_t type)
   static bool lecture_en_cours = false;
   static unsigned long derniere_lecture = 0;
   
-  // Attendre au moins 2 secondes
-  if (millis() - derniere_lecture < DHT22_MIN_INTERVAL_MS) {
-    // Utiliser la dernière valeur lue si trop fréquent
-    // Tint reste inchangée
-  } else {
-    // Éviter les lectures simultanées
-    if (!lecture_en_cours)
-    {
-      lecture_en_cours = true;
-      derniere_lecture = millis();
-      
-      uint8_t Tint_erreur=0;
-      //Tint_erreur = lecture_Tint(&Tint);
-      
-      if (Tint_erreur) {
-        log_erreur(Code_erreur_Tint, Tint_erreur,0);
-        if (Tint_erreur < 10)
-          Tint = 20;
+  #ifdef ESP_THERMOMETRE
+    // Attendre au moins 2 secondes
+    if (millis() - derniere_lecture < DHT22_MIN_INTERVAL_MS) {
+      // Utiliser la dernière valeur lue si trop fréquent
+      // Tint reste inchangée
+    } else {
+      // Éviter les lectures simultanées
+      if (!lecture_en_cours)
+      {
+        lecture_en_cours = true;
+        derniere_lecture = millis();
+        
+        uint8_t Tint_erreur=0;
+        Tint_erreur = lecture_Tint(&Tint);
+        
+        if (Tint_erreur) {
+          log_erreur(Code_erreur_Tint, Tint_erreur,0);
+          if (Tint_erreur < 10)
+            Tint = 20;
+        }
+        lecture_en_cours = false;
       }
-      lecture_en_cours = false;
     }
-  }
-  
-  uint8_t Text_erreur=0;
+  #endif
+
+  //uint8_t Text_erreur=0;
   //Text_erreur = lecture_Text(&Text);
-  if (Text_erreur) Text = 15;
+  //if (Text_erreur) Text = 15;
 
   int sec = millis() / 1000;  // 65000
   int min = (sec / 60) % 60;  //
@@ -2745,45 +2785,6 @@ void requete_status(char *json_response, uint8_t socket, uint8_t type)
   TickType_t expir = xTimerGetExpiryTime(xTimer_Cycle);
   TickType_t Proch_periode = (expir - now) * portTICK_PERIOD_MS/1000;    // nb de secondes avant prochaine mesure temp piscine DSB
 
-
-  #ifdef MODBUS
-    int16_t lect;
-    uint8_t err;
-    err = read_modbus(1, &lect);  // pour temp exterieure
-    float TEx = (float)lect / 10;
-    err += read_modbus(2, &lect);  // pour temp exterieure 1h
-    float TEx1 = (float)lect / 10;
-    err += read_modbus(3, &lect);  // pour temp exterieure 24h
-    float TEx24 = (float)lect / 10;
-    err += read_modbus(158, &lect);  // pour marche chauffage
-    uint8_t MMC = (uint8_t)lect;
-    err += read_modbus(31, &lect);  // pour temp consigne chauffage
-    float TCc = (float)lect / 10;
-    err += read_modbus(11, &lect);  // pour temp chauffage (retour)
-    float TRe = (float)lect / 10;
-    err += read_modbus(12, &lect);  // pour temp chauffage départ
-    float TDe = (float)lect / 10;
-    err += read_modbus(30, &lect);  // pour temp chauffage actuel
-    float TCh = (float)lect / 10;
-    err += read_modbus(32, &lect);  // pour temp consigne ecrite
-    float TCcE = (float)lect / 10;
-    err += read_modbus(37, &lect);  // pour temp consigne ballon
-    float TCB = (float)lect / 10;
-    err += read_modbus(19, &lect);  // pour temp ballon
-    float TBa = (float)lect / 10;
-    err += read_modbus(160, &lect);  // pour marche ballon
-    uint8_t MMB = (uint8_t)lect;
-    err += read_modbus(138, &lect);  // pour nb d'heures compresseur
-    uint16_t HCOMP = (uint16_t)lect;
-    err += read_modbus(4, &lect);  // pour temp Depart captage
-    float TDc = (float)lect / 10;
-    err += read_modbus(5, &lect);  // pour temp Retour captage
-    float TRc = (float)lect / 10;
-    err += read_modbus(6, &lect);  // pour temp Evaporation
-    float TEv = (float)lect / 10;
-
-    if (err) Serial.println("erreur lecture modbus");
-  #endif
 
   if (init_time) lectureHeure();
 
@@ -2804,45 +2805,35 @@ void requete_status(char *json_response, uint8_t socket, uint8_t type)
   p += sprintf(p, "\"periode_cycle\":%d,", periode_cycle);
   p += sprintf(p, "\"PPE\":%i,", Proch_periode);
 
+  p += sprintf(p, "\"Tint\":%.1f,", Tint);
+  p += sprintf(p, "\"Text\":%.1f,", Text);
+
+  float Cons = (float)Consigne/10;
+  if (fo_co) Cons = (float)fo_co/10;
+  p += sprintf(p, "\"consigne\":%.1f,", Cons);
+
+  p += sprintf(p, "\"fo_jus\":%i,", fo_jus);
+  p += sprintf(p, "\"planning\":%i,", planning);
+  p += sprintf(p, "\"vacances\":%i,", vacances);
+  p += sprintf(p, "\"va_cons\":%.1f,", (float)va_cons/10);
+  p += sprintf(p, "\"va_date\":%i,", va_date);
+  p += sprintf(p, "\"va_heure\":%i,", va_heure);
+  p += sprintf(p, "\"cons_fixe\":%i,", cons_fixe);
+  p += sprintf(p, "\"co_fi\":%.1f,", (float)co_fi/10);
+
+
   p += sprintf(p, "\"Kp\":%.2f,", Kp);
   p += sprintf(p, "\"Ki\":%.4f,", Ki);
   p += sprintf(p, "\"Kd\":%.4f,", Kd);
-  p += sprintf(p, "\"Tint\":%.1f,", Tint);
-  p += sprintf(p, "\"Text\":%.1f,", Text);
-  p += sprintf(p, "\"Teau\":%.1f,", Teau);
-  p += sprintf(p, "\"consigne\":%.1f,", Consigne);
   p += sprintf(p, "\"HG\":%d,", HG - 1);
   p += sprintf(p, "\"Tloi\":%.1f,", T_loi_eau);
   p += sprintf(p, "\"Tobj\":%.1f,", T_obj);
   p += sprintf(p, "\"Output\":%.3f,", Output);
   p += sprintf(p, "\"DerFct\":%i,", dernier_fct);
   p += sprintf(p, "\"DerFin\":%i,", heure_arret);
-  p += sprintf(p, "\"ForD\":%i,", forcage_horaire);
-  p += sprintf(p, "\"ForC\":%i,", forcage_consigne);
   p += sprintf(p, "\"MMC\":%i,", MMCh-1);
   uint16_t last_temp_time = (last_remote_temp_time/1000/60);  // temps en minutes
   p += sprintf(p, "\"LRTT\":%i,", last_temp_time);
-
-  /*#ifdef MODBUS
-  p += sprintf(p, "\"TEx\":%.1f,", TEx);
-  p += sprintf(p, "\"TEx1\":%.1f,", TEx1);
-  p += sprintf(p, "\"TEx24\":%.1f,", TEx24);
-  p += sprintf(p, "\"MMC\":%d,", MMC);
-  p += sprintf(p, "\"TCc\":%.1f,", TCc);
-  p += sprintf(p, "\"TCh\":%.1f,", TCh);
-  p += sprintf(p, "\"TRe\":%.1f,", TRe);
-  p += sprintf(p, "\"TCcE\":%.1f,", TCcE);
-  p += sprintf(p, "\"TDe\":%.1f,", TDe);
-  p += sprintf(p, "\"TCB\":%.1f,", TCB);
-  p += sprintf(p, "\"TBa\":%.1f,", TBa);
-  p += sprintf(p, "\"TDc\":%.1f,", TDc);
-  p += sprintf(p, "\"TRc\":%.1f,", TRc);
-  p += sprintf(p, "\"TEv\":%.1f,", TEv);
-  p += sprintf(p, "\"MMB\":%d,", MMB);
-  p += sprintf(p, "\"HCOMP\":%i,", HCOMP);
-  #endif*/
-  //p += sprintf(p, "\"etat_compr\":%i,", etat_compr);
-  //p += sprintf(p, "\"Ballon\":%d,", Ballon - 1);
 
 
   uint8_t i;
@@ -3029,7 +3020,7 @@ void recep_message(char *messa) // recept_uart
 {
   uint8_t type;
   uint8_t res;
-  char reg[10];
+  char reg[11];
   char data[200];  // Variable pour stocker ce qu'il y a après ":"
   data[0]='\0';
   uint8_t err=1;
@@ -3042,7 +3033,11 @@ void recep_message(char *messa) // recept_uart
   {
     #ifndef Sans_securite
       if (xTimer_Securite != NULL) 
-          xTimerStart(xTimer_Securite,100);  // permet de couper la securite au bout de 15 minutes
+      {
+          xTimerStop(xTimer_Securite,100);
+          xTimerChangePeriod(xTimer_Securite,(uint32_t)15*60*(1000/portTICK_PERIOD_MS),100);
+          xTimerStart(xTimer_Securite,100);  // permet de couper la securite au bout de 2 minutes
+      }
     #endif
     cpt_securite = 1;
   }
@@ -3504,10 +3499,15 @@ void init_time_ps()
 
 void loop()
 {
-    //esp_task_wdt_reset();
+  #ifdef WatchDog
+    esp_task_wdt_reset();
+  #endif
+
   //heap_caps_check_integrity_all(true);  // place ce test dans ton loop()
 
-  ArduinoOTA.handle();
+  #ifdef OTA
+    ArduinoOTA.handle();
+  #endif OTA
 
   #ifdef ESP_THERMOMETRE
     // Si on est en mode "Stay Awake" (réveil par bouton), on attend 30s
@@ -3527,9 +3527,9 @@ void loop()
     }
   #endif
 
-  //Serial.printf("loop - secu:%d\n\r", cpt_securite);
-  //vTaskDelay(temps_boucle_loop*1000 / portTICK_PERIOD_MS); // Petite pause
-  vTaskDelay(300 / portTICK_PERIOD_MS); // Petite pause
+  Serial.printf(".");
+  vTaskDelay(temps_boucle_loop*1000 / portTICK_PERIOD_MS); // Petite pause
+  //vTaskDelay(300 / portTICK_PERIOD_MS); // Petite pause
 
 }
 
@@ -3800,12 +3800,40 @@ server.on("/verif", HTTP_GET, [](AsyncWebServerRequest *request){
   // requette Status pour récuperer toutes les valeurs
   server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
     //static char json_response[MAX_DUMP];
-    uint8_t type=0;
+    uint8_t type=1;
 
     if ( request->hasParam("type") )
-    {
       type = request->getParam("type")->value().toInt();
+
+
+    IPAddress clientIP = request->client()->remoteIP();
+
+    #ifdef DEBUG
+        Serial.print("Client IP : ");
+        Serial.println(clientIP);
+    #endif
+
+    // Vérification origine
+    uint8_t orig=1;  // 0:local
+    if (clientIP[0] == 192 && clientIP[1] == 168 && clientIP[2] == 251 && clientIP[3] != 1) {
+        Serial.println("Requête depuis LAN");
+        orig=0;
     }
+
+    if (clientIP == IPAddress(192,168,251,1)) {
+        Serial.println("Requête via routeur (probablement externe)");
+    }
+
+    if (!orig) // suppression securite
+    {
+        #ifndef Sans_securite
+          xTimerStop(xTimer_Securite,100);
+          xTimerChangePeriod(xTimer_Securite,(uint32_t)2*60*(1000/portTICK_PERIOD_MS),100);
+          xTimerStart(xTimer_Securite,100);  // permet de couper la securite au bout de 2 minutes
+          cpt_securite = 1;
+        #endif
+    }
+
     requete_status(buffer_dmp, 0, type);
 
     #ifdef DEBUG

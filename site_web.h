@@ -59,6 +59,32 @@ const char index_html[] PROGMEM = R"rawliteral(
   table.pgm th, table.pgm td { border: 1px solid #555; padding: 4px; text-align: center; }
   table.pgm input { width: 40px; background: #333; color: #fff; border: 1px solid #666; text-align: center; }
   table.pgm select { background: #333; color: #fff; border: 1px solid #666; font-size: 12px; }
+#consigne-group {
+    position: relative;
+    display: inline-block;
+}
+
+.dropdown {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #fff;
+    border: 1px solid #ccc;
+    max-height: 150px;
+    overflow-y: auto;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    z-index: 100;
+}
+
+.dropdown div {
+    padding: 5px 10px;
+    cursor: pointer;
+    text-align: center;
+}
+
+.dropdown div:hover {
+    background-color: #eee;
+}
 </style>
 </head>
 <body>
@@ -73,47 +99,115 @@ const char index_html[] PROGMEM = R"rawliteral(
           <input type="checkbox" id="nav-toggle-cb" checked="checked">
           <nav id="menu">
 
-            <div class="input-group" id="consigne-group">
-                <label for="consigne">Consigne      </label>
-                <!--<p STYLE="padding:0 0 0 6px;"></p>
-                <div class="container">
-                  <div id="consigne" class="default-action"></div>
-                </div>-->
-                <p STYLE="padding:0 0 0 25px;"></p>
-              <input id="consigne" type="text"  size="6"  class="default-action">
-            </div>
-
             <div class="input-group">
                 <label for="temp">Température intérieure :</label>
                 <div class="text">
                     <span id="Tint" class="default-action"></span>&deg;C&nbsp&nbsp&nbsp&nbsp
                 </div>
             </div>
+
+
+            <div class="input-group" id="consigne-group">
+                <label for="consigne">Consigne</label>
+                <input id="consigne" type="text" size="6" class="default-action">°C
+            </div>
+
+            <div class="input-group" id="jusque-group">
+                <label for="fo_jus">Forcage consigne pendant: </label> 
+                <input id="fo_jus" type="text" size="6" class="default-action">min
+            </div>
+
             <div class="input-group">
                 <label for="Text">Temp Ext:</label>
                 <div class="text">
                     <span id="Text" class="default-action"></span>&deg;C&nbsp&nbsp&nbsp
                 </div>
-                <label for="TPAC">Temp Eau:</label>
-                <div class="text">
-                    <span id="TPAC" class="default-action"></span>&deg;C
-                </div>
             </div>
 
 
-            <div class="input-group" id="HG-group">
-              <label for="HG">Hors Gel</label>
+            <div class="input-group" id="PL-group">
+              <label for="planning">Planning</label>
               <div class="switch">
-                  <input id="HG" type="checkbox"  class="default-action">
-                  <label class="slider" for="HG"></label>
+                  <input id="planning" type="checkbox"  class="default-action">
+                  <label class="slider" for="planning"></label>
               </div>
               <div class="default-action">
                 <div class="container">
-                  <div id="HG_led" class="default-action" ></div>
+                  <div id="planning_led" class="default-action" ></div>
                 </div>
               </div>                  
             </div>
 
+            <div class="input-group" id="vac-group">
+              <label for="vacances">Vacances</label>
+              <div class="switch">
+                  <input id="vacances" type="checkbox"  class="default-action">
+                  <label class="slider" for="vacances"></label>
+              </div>
+              <div class="default-action">
+                <div class="container">
+                  <div id="vacances_led" class="default-action" ></div>
+                </div>
+              </div>                  
+            </div>
+
+              <div>
+                <label for="vac-toggle-prog" class="toggle-section-label">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#f00a0a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                  </label>
+                  <input type="checkbox" id="vac-toggle-prog" class="hidden toggle-section-button" checked="checked">
+                <section class="toggle-section">
+                  <div class="input-group">
+                    <label for="va_cons">Consigne:</label>
+                    <div class="text">
+                      <input id="va_cons" type="text" minlength="1" maxlength="4" size="4" value="12" class="default-action">°C
+                    </div>
+                  </div>
+
+                  <div class="input-group">
+                    <label for="va_date">Date fin:</label>
+                    <div class="text">
+                      <div id="va_date_value" style="width: 30px; display: inline-block;"></div>
+                      <input id="va_date" type="range" min="0" max="90" value="0" class="default-action">
+                      &nbsp;jours
+                    </div>
+                  </div>
+                  <div class="input-group"><label for="va_heure">heure fin:</label>
+                    <div class="text">
+                      </p> <input id="va-heure" type="text" size="6" class="default-action">h
+                    </div>
+                  </div>
+                </section>
+              </div>
+
+
+            <div class="input-group" id="PL-group">
+              <label for="cons_fixe">Consigne fixe</label>
+              <div class="switch">
+                  <input id="cons_fixe" type="checkbox"  class="default-action">
+                  <label class="slider" for="cons_fixe"></label>
+              </div>
+              <div class="default-action">
+                <div class="container">
+                  <div id="cons_fixe_led" class="default-action" ></div>
+                </div>
+              </div>                  
+            </div>
+
+              <div>
+                <label for="cf-toggle-prog" class="toggle-section-label">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#f00a0a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                  </label>
+                  <input type="checkbox" id="cf-toggle-prog" class="hidden toggle-section-button" checked="checked">
+                <section class="toggle-section">
+                  <div class="input-group">
+                    <label for="co_fi">val:</label>
+                    <div class="text">
+                      <input id="co_fi" type="text" minlength="1" maxlength="4" size="4" value="14" class="default-action">°C
+                    </div>
+                  </div>
+                </section>
+              </div>
 
             <p>Graphique Temperature : </p>
             <canvas id = "schema" height="130" width="203" style="border:1px solid" class="graph-group">
@@ -287,7 +381,7 @@ const char index_html[] PROGMEM = R"rawliteral(
               </div>                  
             </div>
 
-            <div class="input_group">
+            <div class="input-group">
               <label for="compress">Fct compresseur:</label>
               <div class="container">
                 <div id="etat_compr" class="default-action"></div>
@@ -477,7 +571,9 @@ const char index_html[] PROGMEM = R"rawliteral(
     erreur_heure = [];
     erreur_minute = [];
     maj=0;
+    fo_co=0;
     
+
     function stepsToTime(v) {
         let totalMins = parseInt(v) * 10;
         let h = Math.floor(totalMins / 60);
@@ -500,6 +596,15 @@ const char index_html[] PROGMEM = R"rawliteral(
        var baseHost = document.location.origin;
 
 
+      function updateJusqueGroup(fo_jus)
+      {
+      const group = document.getElementById("jusque-group");
+      if (fo_jus != 0)
+          group.style.display = "block";
+      else
+          group.style.display = "none";
+      }
+      
       const updateValue = (el, value, updateRemote) => {   // mise à jour de la valeur sur la page web
         updateRemote = updateRemote == null ? true : updateRemote
         let initialValue
@@ -539,6 +644,10 @@ const char index_html[] PROGMEM = R"rawliteral(
           } else {
             initialValue = el.value
             el.value = value
+            const valueEl = document.getElementById(el.id + "_value");
+            if (valueEl) {
+              valueEl.textContent = value;            
+            }
           }
         }
         if (updateRemote && initialValue !== value) {
@@ -695,59 +804,6 @@ const char index_html[] PROGMEM = R"rawliteral(
       }
 
 
-      const setRegMButton = document.getElementById('set-regM')
-      setRegMButton.onclick = () => {
-        let reg = parseInt(document.getElementById('regM-addr').value);
-        let value = parseInt(document.getElementById('regM-value').value);
-        let getValueField = document.getElementById('get-regM-value'); // Champ à mettre à jour
-
-        const query = `${baseHost}/Set?type=3&reg=${reg}&val=${value}`
-
-        fetch(query)
-          .then(response => {
-              if (!response.ok) {
-                  throw new Error(`Erreur HTTP ${response.status}`);
-              }
-              return response.json();
-          })
-          .then(state => {
-              console.log(`Réponse reçue :`, state);
-
-              // Vérifier que la réponse contient bien les clés attendues
-              if (state.reg !== undefined && state.val !== undefined) {
-                  console.log(`Mise à jour de get-regM-value avec : ${state.val}`);
-                  
-                  // Met à jour la valeur en utilisant la fonction `updateValue`
-                  updateValue(getValueField, state.val, false);
-              } else {
-                  console.warn("Réponse invalide, impossible de mettre à jour get-regM-value.");
-              }
-          })
-          .catch(error => {
-              console.error("Erreur lors de la requête :", error);
-          });
-        };
-
-      const getRegMButton = document.getElementById('get-regM')
-      getRegMButton.onclick = () => {
-        let reg = parseInt(document.getElementById('get-regM-addr').value);
-        let value = document.getElementById('get-regM-value');
-
-        const query = `${baseHost}/Get?type=3&reg=${reg}`
-
-        fetch(query)
-          .then(function (response) {
-              return response.json()
-          })
-          .then(function (state) {
-            if (state.reg !== undefined && state.val !== undefined) {
-                  console.log(`Registre : ${state.reg}, Valeur : ${state.val}`);
-                  value.innerHTML = state.val;
-            }
-          })
-      }
-
-
       function updateConfig (el) {   // modif sur page web : requete / set pour mettre a jour dans le soft
         let value
         switch (el.type) {
@@ -775,7 +831,8 @@ const char index_html[] PROGMEM = R"rawliteral(
             if ((el.id === 'code_secu') || (el.id === 'coche_secu')) {
               setTimeout(() => { get_value('codeR_secu'); }, 1000);
             }
-            if ((el.id === 'HG') || (el.id === 'MMC')) {
+            if ((el.id === 'vacances') || (el.id === 'planning')
+            || (el.id === 'co_fi') || (el.id === 'cons_fixe')) {
               setTimeout(() => { get_value(el.id); }, 1000);
             }
           })
@@ -813,6 +870,10 @@ const char index_html[] PROGMEM = R"rawliteral(
             if (state[el.id] !== undefined)
             updateValue(el, state[el.id], false)
           })
+
+        if (state.fo_jus !== undefined) {
+            updateJusqueGroup(parseInt(state.fo_jus));
+        }
 
         for (var j =0; j<6; j++)
         {

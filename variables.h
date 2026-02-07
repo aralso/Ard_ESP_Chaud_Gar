@@ -111,7 +111,8 @@ typedef enum {
     EVENT_24H,
     EVENT_3min,
     EVENT_CYCLE,
-    EVENT_UART1
+    EVENT_UART1,
+    EVENT_ACTIV_CHAUD
 } systeme_eve_type_t;
 
 // Structure d'un événement tache sequenceur
@@ -171,17 +172,23 @@ extern volatile uint8_t ackReceived;  // global pour indiquer que le peer a ack�
 extern volatile int ackChannel;       // canal où ça a marché
 
 extern planning_t plan[];
-extern uint16_t forcage_horaire;
-extern uint8_t forcage_consigne;
-extern uint8_t Mode_Fixe;
-extern uint8_t ch_arret;
+extern uint16_t fo_jus;     // nb minutes restantes de forcage consigne
+extern uint8_t fo_co;      // consigne de forcage : en dixième de degrés : 0,0° à 25,5°
+extern uint8_t planning;   // booléen 1:plannig 0:non
+extern uint8_t vacances;   // booléen 1:vacances 0:non
+extern uint8_t va_cons;    // consigne pendant les vacances : en dixième de degrés : 0,0° à 25,5°
+extern uint16_t va_date;   // date de fin de vacances : en nb de jours depuis 2020
+extern uint8_t va_heure;  // heure de fin de vacances 0h à 24h
+extern uint8_t cons_fixe;  // booléen 1:consigne fixe  0:non
+extern uint8_t co_fi;      // consigne fixe : en dixième de degrés : 0,0° à 25,5°
+
 extern unsigned long last_chaudiere_change;
-extern char mdp_routeur[16];
 extern unsigned long last_remote_temp_time;
 
 extern float  tempI_moy24h, tempE_moy24h;
 extern uint8_t cpt24_Tint, cpt24_Text;
 
+extern char mdp_routeur[];
 extern int16_t graphique[NB_Val_Graph][NB_Graphique];
 
 extern Preferences preferences_nvs;  // Déclaration externe
