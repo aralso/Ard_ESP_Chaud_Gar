@@ -16,6 +16,9 @@ uint8_t Pt2, Pt1Val, Pt2Val;
 uint8_t HG, MMCh;
 uint8_t mode_regul;
 
+uint8_t activ_cycle;
+int16_t cycle_chaud;
+
 // planning programme chaudiere
 planning_t plan[NB_MAX_PGM];
 
@@ -39,7 +42,11 @@ volatile int ackChannel = -1;       // canal où ça a marché
 
 PID myPID(&Input, &Output, &Consigne, Kp, Ki, Kd, DIRECT);
 
+
 #ifdef Temp_int_DS18B20
+  OneWireNg_CurrentPlatform ow(PIN_DS18B20, false);
+  OneWireNg_DS18B20 sensor(&ow);
+
   // Capteur temperature Dallas DS18B20  Temperature intérieure
   typedef uint8_t DeviceAddress[8];
   const int PIN_Tint = 13;      // Tint:Entrée onewire GPIO DS18B20
@@ -63,6 +70,8 @@ float loi_eau_Tint;
 
 float T_obj;
 float T_loi_eau;
+
+uint16_t err_Tint, err_Text, err_Heure;  // compteurs d'erreurs
 
 // Entrée analogique pour mesurer la température exterieure
 uint16_t Text1, Text2, Text1Val, Text2Val;  // valeurs pour calibration (T*10)
@@ -109,36 +118,37 @@ void init_10_secondes()
 void setup_0()
 {
 
-  if (NB_Graphique)
-  {
-    graphique[0][0] = 180;  //int - vert
-    graphique[1][0] = 185;
-    //graphique[2][0] = 190;
-    //graphique[3][0] = 185;
-    //graphique[4][0] = 180;
-    //graphique[5][0] = 185;
-  }
-  /*graphique[0][1] = 110;  // ext - bleu
-  graphique[1][1] = 80;
-  graphique[2][1] = 103;
-  graphique[3][1] = 95;
-  graphique[0][2] = 245;  // eau - rouge
-  graphique[1][2] = 253;
-  graphique[2][2] = 273;
-  graphique[3][2] = 255;*/
-
   if (NB_Graphique==6)
   {
-    /*graphique[0][3] = 35; 
-    graphique[1][3] = 38;
-    graphique[2][3] = 42;
-    graphique[3][3] = 32;
-    graphique[0][4] = 50;  // divisé par 10
-    graphique[1][4] = 55;
-    graphique[2][4] = 48;  
-    graphique[3][4] = 52;*/
-  }
+    graphique[0][0] = 180;  //Tint - vert
+    graphique[1][0] = 185;
+    graphique[2][0] = 190;
 
+    graphique[0][1] = 110;  // Text - bleu
+    graphique[1][1] = 80;
+    graphique[2][1] = 103;
+    graphique[3][1] = 95;
+
+    graphique[0][2] = 150;  // Chaud
+    graphique[1][2] = 150;
+    graphique[2][2] = 200;
+    graphique[3][2] = 200;
+
+    graphique[0][3] = 185;  // Tint moy
+    graphique[1][3] = 183;
+    graphique[2][3] = 183;
+    graphique[3][3] = 195;
+
+    graphique[0][4] = 35;   // Text moy
+    graphique[1][4] = 38;
+    graphique[2][4] = 42;
+    graphique[3][4] = 32;
+
+    graphique[0][5] = 50;  // cout
+    graphique[1][5] = 55;
+    graphique[2][5] = 48;  
+    graphique[3][5] = 52;
+  }
 }
 
 // setup : lecture nvs
@@ -150,7 +160,7 @@ void setup_nvs()
     // periode du cycle : lecture Temp ext par internet
     periode_cycle = preferences_nvs.getUChar("cycle", 0);  // de 10 a 120
     if ((periode_cycle < 10) || (periode_cycle > 120)) {
-      periode_cycle = 60;
+      periode_cycle = 15;
       preferences_nvs.putUChar("cycle", periode_cycle);
       Serial.printf("Raz periode cycle : val par defaut %imin\n\r", periode_cycle);
     }
@@ -497,7 +507,14 @@ void setup_1()
     #endif
  
     #ifdef Temp_int_HDC1080
+
+    #ifdef ESP32_v1
       Wire.begin(21, 22); // Forçage des pins SDA=21, SCL=22 pour ESP32 DevKit V1
+    #endif
+    #ifdef ESP32_Fire2
+      Wire.begin(19, 20); // Forçage des pins SDA=20, SCL=21 pour ESP32 Firebeetle 2
+    #endif
+
       hdc1080.begin(0x40);
       /*if (i2cDevicePresent(0x40)) {
         Serial.println("HDC1080 détecté");
@@ -528,7 +545,7 @@ void setup_1()
       Tint = 20.0;
       Tint_err = 7;
     }
-    if (Tint_err) log_erreur(Code_erreur_Tint, Tint_err, 0);
+    if (Tint_err) log_erreur(Code_erreur_Tint, Tint_err, 1);
     else
       Serial.printf("Temp int:%.2f\n\r", Tint);
   #endif
@@ -665,7 +682,7 @@ uint8_t requete_Get_appli(const char* var, float *valeur)
   }
   if (strncmp(var, "va_cons",8) == 0) {
     res = 0;
-    *valeur = (float)va_cons/10;
+    *valeur = va_cons;
   }
   if (strncmp(var, "va_date",8) == 0) {
     res = 0;
@@ -681,7 +698,7 @@ uint8_t requete_Get_appli(const char* var, float *valeur)
   }
   if (strncmp(var, "co_fi",6) == 0) {
     res = 0;
-    *valeur = (float)co_fi/10;
+    *valeur = co_fi;
   }
 
 
@@ -704,7 +721,8 @@ void maj_etat_chaudiere_delai(uint8_t delai)
 void maj_etat_chaudiere()
 {
   #ifdef ESP_CHAUDIERE
-  Serial.printf("MMCh:%i\n\r", MMCh);
+  activ_cycle = 0;
+  //Serial.printf("MMCh:%i\n\r", MMCh);
   if (MMCh==2)
   {
     if (init_time) lectureHeure(); // recupere heure et date_ac
@@ -719,13 +737,17 @@ void maj_etat_chaudiere()
     if (fo_jus)  // forcage  court
     {
       cons_chaud = fo_co;
-      fo_jus--;
+      if (fo_jus > periode_cycle)      fo_jus -= periode_cycle;
+      else fo_jus=0;
     }
     else if (vacances)   // forcage vacances
     {
       cons_chaud = va_cons;
       if ((va_date >= date_ac) && (va_heure >= heure))  // fin des vacances
+      {
           vacances = 0;
+          preferences_nvs.putUChar("vac", vacances);
+      }
     }
     else if (cons_fixe)  // consigne fixe
     {
@@ -749,7 +771,7 @@ void maj_etat_chaudiere()
             {
               cons_chaud = plan[i].ch_consigne;
               planning_actif = 1;
-              Serial.printf("Planning %d Actif : Consigne = %i\n", i, Consigne);
+              Serial.printf("Planning %d Actif : Consigne = %i\n", i, cons_chaud);
               break; // Priorité trouvée, on sort
             }
 
@@ -780,25 +802,85 @@ void maj_etat_chaudiere()
       }      
     }
     Consigne = cons_chaud;
-    Serial.printf("regul:Text:%.1f Tint:%.1f cons:%.1f\n\r", Text, Tint, cons_chaud);
 
-    unsigned long now = millis();
-    if (now - last_chaudiere_change > 20000) // Sécurité 20s
+
+    // modes dégradés
+    unsigned long mil = millis();
+    if ((mil - last_remote_heure_time > 61*60*1000) || (!init))  // heure non mise a jour depuis 25 min
     {
-      if (cons_chaud < Tint/10) 
+      // Faire la moyenne des consignes
+      if (planning)
       {
-        chaudiere = 1; 
-        digitalWrite(PIN_Chaudiere, LOW);  // DesActivation chaudiere
-        last_chaudiere_change = now;
-        Serial.println("Régulation : Arrêt Chaudière (Consigne < Tint)");
+        uint16_t cons=0;
+        uint8_t nb_cons=0;
+        for (uint8_t i = 0; i < NB_MAX_PGM; i++) 
+        {
+          // Si programme definis (non nul)
+          if (plan[i].ch_debut != 0 || plan[i].ch_fin != 0) 
+          {
+            cons += plan[i].ch_consigne;
+            cons += plan[i].ch_cons_apres;
+            nb_cons += 2;
+          }
+        }
+        if (nb_cons) cons_chaud = cons / nb_cons;  
+        else cons_chaud = 100;  // 10° par défaut si pas de programmes definis  
       }
-      else 
+      err_Heure++;
+    } 
+        // pb Tint
+    if (mil - last_remote_Tint_time > 61*60*1000)  // Tint non mise a jour depuis 1 heure
+    {
+      // Utiliser Text : Definir un cycle marche-arret
+      if (mil - last_remote_Text_time > 61*60*1000)  // Text non mise a jour depuis 1 heure
       {
-        chaudiere = 2;
+        // calcul du cycle en fonction de la consigne : consigne=10=>10%   consigne=20=>30%
+        cycle_chaud = (Consigne*2 - 100); 
+      }
+      else
+      {
+         // calcul du cycle en fonction de la consigne et de la Temp Ext : 12°=>-4%  8%=>+4%
+        cycle_chaud = (Consigne*2 - 100) - (Text-10)*20;
+      }
+      if (cycle_chaud < 50) cycle_chaud=50;
+      if (cycle_chaud > 500) cycle_chaud=500;
+      activ_cycle=1;
+    }
+
+    Serial.printf("regul:Text:%.1f Tint:%.1f cons1:%.1f cons2:%i\n\r", Text, Tint, Consigne, cons_chaud);
+    if (activ_cycle)
+      Serial.printf("Cycle chaudiere: %i valeur:%i", activ_cycle, cycle_chaud);
+
+    if (!activ_cycle)
+    {
+      if (mil - last_chaudiere_change > 10000) // Sécurité 10s
+      {
+        if (cons_chaud < Tint*10) 
+        {
+          chaudiere = 0; 
+          digitalWrite(PIN_Chaudiere, LOW);  // DesActivation chaudiere
+          last_chaudiere_change = now;
+          Serial.println("Régulation : Arrêt Chaudière (Consigne < Tint)");
+        }
+        else 
+        {
+          chaudiere = 1;
+          digitalWrite(PIN_Chaudiere, HIGH);  // Activation chaudiere
+          last_chaudiere_change = now;
+          Serial.println("Régulation : Marche Chaudière (Consigne >= Tint)");
+        }
+      }
+    }
+    else  // cycle chaudiere
+    {
+        xTimerStop(xTimer_cycle_chaud,100);
+        chaudiere = 1;
         digitalWrite(PIN_Chaudiere, HIGH);  // Activation chaudiere
         last_chaudiere_change = now;
         Serial.println("Régulation : Marche Chaudière (Consigne >= Tint)");
-      }
+        xTimerChangePeriod(xTimer_cycle_chaud,(uint32_t)periode_cycle*60*(1000/portTICK_PERIOD_MS)*cycle_chaud/1000,100);
+        xTimerStart(xTimer_cycle_chaud,100);
+
     }
   }
   #endif
@@ -830,14 +912,14 @@ uint8_t requete_Set_appli (String param, float valf)
        maj_etat_chaudiere_delai(15);
     }
 
-    if (param == "RTint") {
+/*    if (param == "RTint") {  // Non utilisé
       res = 0;
       Tint = valf;
-      last_remote_temp_time = millis();
+      last_remote_Tint_time = millis();
       cpt24_Tint++;
       tempI_moy24h += Tint;
       Serial.printf("Réception RTint : %.2f°C\n", Tint);
-    }
+    }*/
 
 
     if (param == "HG") 
@@ -941,7 +1023,7 @@ uint8_t requete_Set_appli (String param, float valf)
     }
 
     if (param == "planning") {
-      if (round(valf) <2)
+      if  (valf >=0  && (round(valf) <2))
       {
         planning = (uint8_t)round(valf);
         preferences_nvs.putUChar("Pla", planning);
@@ -951,7 +1033,7 @@ uint8_t requete_Set_appli (String param, float valf)
       }
     }
     if (param == "vacances") {
-      if (round(valf) <2)
+      if (valf >=0  && (round(valf) <2))
       {
         vacances = (uint8_t)round(valf);
         preferences_nvs.putUChar("vac", vacances);
@@ -971,21 +1053,20 @@ uint8_t requete_Set_appli (String param, float valf)
       }
     }
     if (param == "va_date") {
-      uint16_t temp = (uint16_t)round(valf);
-      if (temp >= 1800)
+      if (valf >= 0 && valf <= 90)
       {
-        va_date = temp;
-        preferences_nvs.putUShort("Vada", va_date);
+        va_date = (uint16_t)round(valf);
+        lectureHeure();
+        preferences_nvs.putUShort("Vada", va_date+date_ac);
         Serial.printf("date fin vacances: %i\n", va_date);
         res = 0;
         maj_etat_chaudiere_delai(30);
       }
     }
     if (param == "va_heure") {
-      uint8_t temp = (uint8_t)round(valf);
-      if (temp <= 144)
+      if (valf >=0 &&  valf <= 144)
       {
-        va_heure = temp;
+        va_heure = (uint8_t)round(valf);
         preferences_nvs.putUChar("VaHe", va_heure);
         Serial.printf("heure fin vacances: %i\n", va_heure);
         res = 0;
@@ -993,7 +1074,7 @@ uint8_t requete_Set_appli (String param, float valf)
       }
     }
     if (param == "cons_fixe") {
-      if (round(valf) <2)
+      if  (valf >=0  && (round(valf) <2))
       {
         cons_fixe = (uint8_t)round(valf);
         preferences_nvs.putUChar("Cof", cons_fixe);
@@ -1012,6 +1093,7 @@ uint8_t requete_Set_appli (String param, float valf)
         maj_etat_chaudiere_delai(20);
       }
     }
+
   }
 
   return res;
@@ -1249,28 +1331,6 @@ uint8_t requete_SetReg_appli(int param, float valeurf)
   }
 
 
-  if (param == 30)  // registre 30 : index
-  {
-    res = 0;
-    index_val = valeur;
-  }
-  if (param == 31)  // registre 31 : graphique temp int
-  {
-    res = 0;
-    graphique[index_val][0] = valeur;
-  }
-  if (param == 32)  // registre 32 : graphique temp ext
-  {
-    res = 0;
-    //preTransmission();
-    graphique[index_val][1] = valeur;
-  }
-  if (param == 33)  // registre 33 : graphique temp pac
-  {
-    res = 0;
-    //postTransmission();
-    graphique[index_val][2] = valeur;
-  }
   if (param == 40)  // registre 40 : mode
   {
     if ((valeur) && (valeur <= 3)) {
@@ -1413,8 +1473,7 @@ uint8_t lecture_Tint(float *mesure)
     #endif
 
     #ifdef Temp_int_DS18B20
-      ds.requestTemperatures();
-      valeur = ds.getTempCByIndex(0);
+      valeur = ds.getTemperature();
       Tint_erreur=0;
     #endif
 
@@ -1479,9 +1538,14 @@ void fetch_internet_temp() {
       
       if (!error) {
         float temp = doc["current"]["temperature_2m"];
-        if (temp > -50.0 && temp < 60.0) {
+        if (temp > -50.0 && temp < 60.0)
+        {
           Text = temp;
           //Serial.printf("Météo Garches : %.1f°C\n", Text);
+          uint8_t mil = millis();
+          if (mil - last_remote_Text_time > 25*60*1000) // le precedent message est vieux de plus de 25 minutes
+            err_Text++;
+          last_remote_Text_time = mil;
           cpt24_Text++;
           tempE_moy24h += Text;
         }
@@ -1523,7 +1587,7 @@ void event_mesure_temp()  // toutes les 15 minutes : modif allumage chaudiere
       graphique[0][0] = round(Tint * 10);
       graphique[0][1] = round(Text * 10);
 
-      graphique[0][2] = chaudiere*5+10;  // 15:arret 20:marche
+      graphique[0][2] = chaudiere*50+150;  // 150:arret 200:marche
     }
   #endif
 }
@@ -1576,12 +1640,19 @@ void OnDataRecv(const esp_now_recv_info_t * info, const uint8_t *incomingData, i
   Serial.println("=========================================\n");
 
   if (receivedMessage.type == 1) { // Temperature
-    Tint = receivedMessage.value;
-    if ((Tint > 50.01f) || (Tint < 49.99f))
+    float Trecue = receivedMessage.value;
+    if ((Trecue > -10.0) && (Trecue < 49.99f)) 
     {
-      last_remote_temp_time = millis();
+      Tint = Trecue;
+      if ((Trecue < 24.99) || (Trecue > 25.01))
+      {
+        uint8_t mil = millis();
+        if (mil - last_remote_Tint_time > 25*60*1000) // le precedent message est vieux de plus de 25 minutes
+          err_Tint++;
+      last_remote_Tint_time = mil;
       cpt24_Tint++;
       tempI_moy24h += Tint;
+      }
     }
     Serial.printf("✅ Tint mise à jour: %.2f°C\n", Tint);
     
@@ -1604,147 +1675,148 @@ void envoi_temp_esp_chaudiere()
     uint8_t Tint_erreur = lecture_Tint(&Tint);  // Mesure locale
     if (Tint_erreur) Tint=25;
 
-    
-    // Initialisation WiFi en mode Station (nécessaire pour ESP-NOW)
-    WiFi.mode(WIFI_STA);
-    WiFi.disconnect();
-
-    if (esp_now_init() != ESP_OK) {
-      Serial.println("Error initializing ESP-NOW");
-      ESP.restart();
-    }
-
-    esp_now_register_send_cb(OnDataSent);
-
-    // Préparation du Peer (Chaudière)
-    esp_now_peer_info_t peerInfo;
-    memset(&peerInfo, 0, sizeof(peerInfo)); // Initialisation complète à zéro
-    memcpy(peerInfo.peer_addr, mac_chaudiere, 6);
-    peerInfo.channel = 0; // Le canal sera défini avant l'ajout
-    peerInfo.encrypt = false;
-    peerInfo.ifidx = WIFI_IF_STA; // Interface WiFi Station (OBLIGATOIRE)
-
-    // 🚀 OPTION 1 : Forcer le canal connu (plus rapide et économe en énergie)
-    // Si vous connaissez le canal de votre routeur, décommentez ces lignes :
-    /*
-    Serial.printf("🎯 Forçage canal %d (défini dans variables.h)\n", WIFI_CHANNEL);
-    esp_wifi_set_promiscuous(true);
-    esp_wifi_set_channel(WIFI_CHANNEL, WIFI_SECOND_CHAN_NONE);
-    esp_wifi_set_promiscuous(false);
-    last_wifi_channel = WIFI_CHANNEL; // Pour la prochaine fois
-    */
-
-    // 🔍 OPTION 2 : Scan robuste des canaux (si le canal n'est pas connu ou change)
-
-    Serial.printf("🔍 Scan de 13 canaux (priorité: canal %d)\n", last_wifi_channel);
-    uint8_t deliverySuccess = false;
-
-    for (int k = 0; k < 13; k++)
+    if (mac_chaudiere[0] || mac_chaudiere[3] || mac_chaudiere[4])
     {
-      int current_channel = k + last_wifi_channel;
-      if (current_channel > 12) current_channel -= 13;
-      
-      // Fixer le canal
-      Serial.printf("\n--- Essai canal %d ---\n", current_channel);
+      // Initialisation WiFi en mode Station (nécessaire pour ESP-NOW)
+      WiFi.mode(WIFI_STA);
+      WiFi.disconnect();
+
+      if (esp_now_init() != ESP_OK) {
+        Serial.println("Error initializing ESP-NOW");
+        ESP.restart();
+      }
+
+      esp_now_register_send_cb(OnDataSent);
+
+      // Préparation du Peer (Chaudière)
+      esp_now_peer_info_t peerInfo;
+      memset(&peerInfo, 0, sizeof(peerInfo)); // Initialisation complète à zéro
+      memcpy(peerInfo.peer_addr, mac_chaudiere, 6);
+      peerInfo.channel = 0; // Le canal sera défini avant l'ajout
+      peerInfo.encrypt = false;
+      peerInfo.ifidx = WIFI_IF_STA; // Interface WiFi Station (OBLIGATOIRE)
+
+      // 🚀 OPTION 1 : Forcer le canal connu (plus rapide et économe en énergie)
+      // Si vous connaissez le canal de votre routeur, décommentez ces lignes :
+      /*
+      Serial.printf("🎯 Forçage canal %d (défini dans variables.h)\n", WIFI_CHANNEL);
       esp_wifi_set_promiscuous(true);
-      esp_wifi_set_channel(current_channel, WIFI_SECOND_CHAN_NONE);
+      esp_wifi_set_channel(WIFI_CHANNEL, WIFI_SECOND_CHAN_NONE);
       esp_wifi_set_promiscuous(false);
-      
-      // Vérifier que le canal a bien été changé
-      uint8_t actual_channel;
-      wifi_second_chan_t second;
-      esp_wifi_get_channel(&actual_channel, &second);
-      
-      if (actual_channel != current_channel) {
-        Serial.printf("⚠️ Échec changement canal (demandé:%d, actuel:%d)\n", current_channel, actual_channel);
-        delay(50); // Attendre un peu plus
+      last_wifi_channel = WIFI_CHANNEL; // Pour la prochaine fois
+      */
+
+      // 🔍 OPTION 2 : Scan robuste des canaux (si le canal n'est pas connu ou change)
+
+      Serial.printf("🔍 Scan de 13 canaux (priorité: canal %d)\n", last_wifi_channel);
+      uint8_t deliverySuccess = false;
+
+      for (int k = 0; k < 13; k++)
+      {
+        int current_channel = k + last_wifi_channel;
+        if (current_channel > 12) current_channel -= 13;
+        
+        // Fixer le canal
+        Serial.printf("\n--- Essai canal %d ---\n", current_channel);
+        esp_wifi_set_promiscuous(true);
         esp_wifi_set_channel(current_channel, WIFI_SECOND_CHAN_NONE);
+        esp_wifi_set_promiscuous(false);
+        
+        // Vérifier que le canal a bien été changé
+        uint8_t actual_channel;
+        wifi_second_chan_t second;
         esp_wifi_get_channel(&actual_channel, &second);
-        Serial.printf("   2ème tentative: canal actuel=%d\n", actual_channel);
-      } else {
-        Serial.printf("✅ Canal changé: %d\n", actual_channel);
-      }
-      
-      delay(50); // Délai pour stabilisation du canal
-
-      // Ajouter le peer sur ce canal
-      if (esp_now_is_peer_exist(mac_chaudiere)) {
-        esp_now_del_peer(mac_chaudiere);
-      }
-      peerInfo.channel = actual_channel; // Utiliser le canal réel
-      if (esp_now_add_peer(&peerInfo) != ESP_OK){
-        Serial.println("❌ Échec ajout peer");
-        continue;
-      }
-      Serial.println("✅ Peer ajouté");
-
-      // Envoi Température
-      Message_EspNow message;
-      message.type = 1; // Température
-      message.value = Tint;
-      
-      // 🔍 DIAGNOSTIC: Afficher les infos avant envoi
-      Serial.printf("📤 Tentative envoi sur canal %d vers MAC: %02X:%02X:%02X:%02X:%02X:%02X\n",
-                    actual_channel,
-                    mac_chaudiere[0], mac_chaudiere[1], mac_chaudiere[2],
-                    mac_chaudiere[3], mac_chaudiere[4], mac_chaudiere[5]);
-      Serial.printf("   Message: Type=%d, Valeur=%.2f°C\n", message.type, message.value);
-      
-      ackReceived=0;
-      ackChannel = -1;
-      esp_err_t result = esp_now_send(mac_chaudiere, (uint8_t *) &message, sizeof(message));
-
-      if (result == ESP_OK)
-      {
-        Serial.printf("Envoye sur canal %d\n", actual_channel);
-
-        // attendre la réponse max 100 ms
-        int wait = 0;
-        while (!ackReceived && wait < 10) { // 10 * 10ms = 100ms
-            delay(10);
-            wait++;
+        
+        if (actual_channel != current_channel) {
+          Serial.printf("⚠️ Échec changement canal (demandé:%d, actuel:%d)\n", current_channel, actual_channel);
+          delay(50); // Attendre un peu plus
+          esp_wifi_set_channel(current_channel, WIFI_SECOND_CHAN_NONE);
+          esp_wifi_get_channel(&actual_channel, &second);
+          Serial.printf("   2ème tentative: canal actuel=%d\n", actual_channel);
+        } else {
+          //Serial.printf("✅ Canal changé: %d\n", actual_channel);
         }
+        
+        delay(50); // Délai pour stabilisation du canal
 
-        if (ackReceived) // canal trouvé
-        {
-          deliverySuccess = true; 
-          if (last_wifi_channel != actual_channel)
-          {
-            last_wifi_channel = actual_channel;
-          }
-          break;
+        // Ajouter le peer sur ce canal
+        if (esp_now_is_peer_exist(mac_chaudiere)) {
+          esp_now_del_peer(mac_chaudiere);
         }
-      }
-    }
+        peerInfo.channel = actual_channel; // Utiliser le canal réel
+        if (esp_now_add_peer(&peerInfo) != ESP_OK){
+          Serial.println("❌ Échec ajout peer");
+          continue;
+        }
+        //Serial.println("✅ Peer ajouté");
 
-    if (deliverySuccess)
-    {   
-      // Envoi tension batterie tous les 100 cycles
-      cpt_cycle_batt++;
-      if (cpt_cycle_batt >= 100)
-      {
-        float Vbatt = readBatteryVoltage();
-        delay(50);
+        // Envoi Température
         Message_EspNow message;
-        message.type = 2; // Batterie
-        message.value = Vbatt;
-        esp_now_send(mac_chaudiere, (uint8_t *) &message, sizeof(message));
-        Serial.printf("Envoi batterie: %.2fV (cycle %d)\n", Vbatt, cpt_cycle_batt);
-        cpt_cycle_batt = 0; // Réinitialiser le compteur
+        message.type = 1; // Température
+        message.value = Tint;
+        
+        // 🔍 DIAGNOSTIC: Afficher les infos avant envoi
+        /*Serial.printf("📤 Tentative envoi sur canal %d vers MAC: %02X:%02X:%02X:%02X:%02X:%02X\n",
+                      actual_channel,
+                      mac_chaudiere[0], mac_chaudiere[1], mac_chaudiere[2],
+                      mac_chaudiere[3], mac_chaudiere[4], mac_chaudiere[5]);*/
+        Serial.printf("   Message: Type=%d, Valeur=%.2f°C\n", message.type, message.value);
+        
+        ackReceived=0;
+        ackChannel = -1;
+        esp_err_t result = esp_now_send(mac_chaudiere, (uint8_t *) &message, sizeof(message));
+
+        if (result == ESP_OK)
+        {
+          //Serial.printf("Envoye sur canal %d\n", actual_channel);
+
+          // attendre la réponse max 100 ms
+          int wait = 0;
+          while (!ackReceived && wait < 10) { // 10 * 10ms = 100ms
+              delay(10);
+              wait++;
+          }
+
+          if (ackReceived) // canal trouvé
+          {
+            deliverySuccess = true; 
+            Serial.println("✅ Ack Recu");
+            if (last_wifi_channel != actual_channel)
+            {
+              last_wifi_channel = actual_channel;
+            }
+            break;
+          }
+        }
+        else Serial.println("❌ Echec d'envoi");
+      }
+
+      if (deliverySuccess)
+      {   
+        // Envoi tension batterie tous les 100 cycles
+        cpt_cycle_batt++;
+        if (cpt_cycle_batt >= 100)
+        {
+          float Vbatt = readBatteryVoltage();
+          delay(50);
+          Message_EspNow message;
+          message.type = 2; // Batterie
+          message.value = Vbatt;
+          esp_now_send(mac_chaudiere, (uint8_t *) &message, sizeof(message));
+          Serial.printf("Envoi batterie: %.2fV (cycle %d)\n", Vbatt, cpt_cycle_batt);
+          cpt_cycle_batt = 0; // Réinitialiser le compteur
+        }
       }
     }
-    
+    else
+      Serial.println("Adresse Mac chaudiere nulle");
+
     // Deep Sleep
-      Serial.println("Go to Deep Sleep"); // consomme du temps
-      Serial.flush(); 
-      delay(20); 
 
       uint64_t sleep_time = (uint64_t)periode_cycle * 60 * 1000000;
       if (mode_rapide==12)
       sleep_time = (uint64_t)periode_cycle * 1000000;
-      esp_sleep_enable_timer_wakeup(sleep_time);
-      esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_REVEIL, 0); // Réveil par bouton (0 = bas)
-      esp_deep_sleep_start();
+      //passage_deep_sleep(sleep_time);
 }
 
 

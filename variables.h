@@ -4,8 +4,10 @@
 //variables externes
 #include <Preferences.h>  // Inclure la librairie nécessaire
 #include <WiFi.h>
-#include <OneWire.h>
-#include <DallasTemperature.h>
+//#include <OneWire.h>   // ESP32
+//#include <DallasTemperature.h>  // ESP32
+//#include <OneWireNg_DS18B20.h>  // plus large
+//#include <OneWireNg_CurrentPlatform.h>  // plus large
 
 #include <esp_now.h>
 #include <esp_wifi.h>
@@ -43,7 +45,7 @@ typedef struct {
 36: (in only) IN : capteur pression
 39: (in only) IN
 */
-/*#define BTN1 13  // Defaut secteur (pullup)
+/*#define BTN1 14  // Defaut secteur (pullup)
 #define BTN2 12  // intrusion    (pullup)
 #define BTN3 14  // autoprotection    (pullup)
 #define BTN4 15  // marche/Arret    (no pull)  0V:arret 12V:marche
@@ -61,8 +63,14 @@ typedef struct {
   //const int PIN_Tint = 13;  Défini dans le fichier appli.ino
   const int PIN_Tint22 = 5;     // GPIO IN1 Temp interieure DHT22
   const int PIN_PAC = 4;        //  OUT PAC - PWM  40kOhm+100nF(Fc=40Hz) et PWM=40khz
-  #define PIN_REVEIL 12  // Pin de réveil (Bouton externe)
 #define PIN_Vbatt 35   // Pin Surveillance Batterie (LiPo/2)
+
+// Pin Reveil
+#ifdef ESP32_v1
+  #define PIN_REVEIL 12  // Pin de réveil (Bouton externe)
+#else  // Firebeetle
+  #define PIN_REVEIL 5  // Pin de réveil (Bouton externe) PIN RTC : 0 à 7
+#endif
 
 float readBatteryVoltage();
 extern float Vbatt_Th; // Tension batterie thermomètre
@@ -112,7 +120,8 @@ typedef enum {
     EVENT_3min,
     EVENT_CYCLE,
     EVENT_UART1,
-    EVENT_ACTIV_CHAUD
+    EVENT_ACTIV_CHAUD,
+    EVENT_CYCLE_CHAUD
 } systeme_eve_type_t;
 
 // Structure d'un événement tache sequenceur
@@ -134,8 +143,9 @@ typedef struct {
 /* Codes erreur*/
 #define Code_erreur_Tint 1
 #define Code_erreur_Text 2
-#define Code_erreur_depass_tab_status 3
-#define Code_erreur_queue_full       4
+#define Code_erreur_Heure 3
+#define Code_erreur_depass_tab_status 4
+#define Code_erreur_queue_full       5
 #define Code_erreur_Json  5
 #define Code_erreur_queue 6
 #define Code_erreur_google 7
@@ -145,7 +155,7 @@ typedef struct {
 
 #define DEBOUNCE_INTERVAL 300  // Temps anti-rebond en ms
 
-constexpr  int NB_Graphique = 6;  // Temp Ext, Temp int, Temp eau, Durée fct, durée arret, Pression 
+constexpr  int NB_Graphique = 6;  // Temp Ext, Temp int, Chaud, MoyText, MoyTint, Cout, 
 constexpr  int NB_Val_Graph = 99;
 
 extern uint8_t protocole;
@@ -183,7 +193,9 @@ extern uint8_t cons_fixe;  // booléen 1:consigne fixe  0:non
 extern uint8_t co_fi;      // consigne fixe : en dixième de degrés : 0,0° à 25,5°
 
 extern unsigned long last_chaudiere_change;
-extern unsigned long last_remote_temp_time;
+extern unsigned long last_remote_Tint_time, last_remote_Text_time, last_remote_heure_time;
+extern uint16_t err_Tint, err_Text, err_Heure;
+extern uint8_t chaudiere;
 
 extern float  tempI_moy24h, tempE_moy24h;
 extern uint8_t cpt24_Tint, cpt24_Text;

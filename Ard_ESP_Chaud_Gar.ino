@@ -1,9 +1,12 @@
 /* 
 
 TODO : traiter panne routeur => arret esp_now
-    au démarrage, si pas de réseau : méthode de regul ?
-    
+    au démarrage, si pas de réseau, pas d'heure : méthode de regul ?
+    Sonde Tint defaillante => Text => cycle variable
+    ni reseau, ni Tint : cycle constant
 
+v1.6 02/2026 Firebeetle, 
+v1.5 02/2026 esp_sonde et eps_chaudiere ok
 v1.4 02/2026 esp_now
 v1.3 02/2026 OTA, ajout esp32_thermometre, mesure Text par internet
 v1.2 12/2025 1ere version ops, modif site web, compil ok
@@ -33,9 +36,10 @@ Configuration des options de programmation :
 //#define MODE_WT32  // WT32-Eth01 sinon ESP32-CAM ou DOIT ESP32 Devkit V1
 
 //#define DEBUG  // mode station, pas de websocket, pas de sécurite, emulation valeurs STM32
+//#define ESP32_v1    // DOIT ESP32 DEVKIt V1  sinon ESP32_S3
 
 #ifdef ESP_THERMOMETRE
-  #define ESP32_v1    // DOIT ESP32 DEVKIt V1  sinon ESP32_S3
+  #define ESP32_Fire2
   #define Temp_int_HDC1080  // Capteur I2C HDC1080
   #define MODE_Wifi  // Wifi sinon Ethernet
   #define Sans_securite
@@ -44,7 +48,8 @@ Configuration des options de programmation :
   #endif
 
 #else  // Chaudiere
-  #define ESP32_v1    // DOIT ESP32 DEVKIt V1  sinon ESP32_S3
+  #define ESP32_Fire2
+  //#define ESP32_v1    // DOIT ESP32 DEVKIt V1  sinon ESP32_S3
   #define MODE_Wifi  // Wifi sinon Ethernet
   #define Sans_websocket
   //#define Sans_securite
@@ -69,7 +74,7 @@ Configuration des options de programmation :
 
 
 #define DELAI_PING  180  // en secondes, pour le websocket
-#define Version "V1.4"
+#define Version "V1.6"
 
 #define IP_CHAUDIERE "192.168.251.31" // Adresse IP de l'ESP Chaudière
 #define LATITUDE "48.8461"
@@ -135,7 +140,7 @@ extern "C" {
 uint8_t err_wifi_repet;  // permet de resetter si le wifi ne se rétablit pas au bout de 4 jours
 
 uint8_t init_masquage=1;
-uint8_t cpt24h_batt=6;
+uint8_t cpt24h_batt;
 
 void envoi_temp_esp_chaudiere();
 uint8_t parseMacString(const char* str, uint8_t mac[6]);
@@ -211,14 +216,14 @@ uint8_t mode_reseau=13;  //  0:pas de reseau 11:wifi_AP_usine  12:wifi_AP   13:w
 
 char nom_routeur[16]="";
 char mdp_routeur[16]="";
-unsigned long last_remote_temp_time = 0;
+unsigned long last_remote_Tint_time = 0, last_remote_Text_time=0, last_remote_heure_time=0;
 
 int16_t  graphique [NB_Val_Graph][NB_Graphique];
 
 // Status
 RTC_DATA_ATTR uint32_t rtc_magic = 0xDEADBEEF;
 uint8_t rtc_valid;  // 0:non valide-cold reset  1:reset apres deep sleep : RTC valide
-uint16_t nb_err_reseau=0;
+uint16_t nb_err_reseau;
 RTC_DATA_ATTR uint16_t cpt_cycle_batt; // Compteur cycles pour mesure batterie
 uint16_t erreur_queue=0;
 uint8_t num_err_queue[5];
@@ -315,6 +320,7 @@ TimerHandle_t xTimer_Cycle;
 //TimerHandle_t xTimer_Compresseur;
 TimerHandle_t xTimer_Securite;
 TimerHandle_t xTimer_activ_chaud;
+TimerHandle_t xTimer_cycle_chaud;
 
 
 
@@ -344,7 +350,7 @@ volatile int lastButtonState[BTN_COUNT] = {HIGH};  // États précédents
 volatile int stableButtonState[BTN_COUNT] = {HIGH}; // États stables validés
 volatile int pressCounter[BTN_COUNT] = {0}; // Compteurs de validation
 
-const int BTN_PIN[BTN_COUNT] = {13};  // Pins des boutons
+const int BTN_PIN[BTN_COUNT] = {14};  // Pins des boutons
 
 
 #define configASSERT_CODE( x, code ) if( ( x ) == 0 ) { \
@@ -591,6 +597,16 @@ void vTimerMarChaudCallback(TimerHandle_t xTimer)
     }
 }
 
+// timeout pour cycle chaudiere
+void vTimerCycleChaudCallback(TimerHandle_t xTimer)
+{
+  systeme_eve_t evt = { EVENT_CYCLE_CHAUD, 0};
+  if (xQueueSendFromISR(eventQueue, &evt, NULL) != pdTRUE) 
+    {
+      if (erreur_queue<5) num_err_queue[erreur_queue]=5;
+      erreur_queue++;
+    }
+}
 
 
 
@@ -800,6 +816,12 @@ void taskHandler(void *parameter) {
                   maj_etat_chaudiere();
                   break;
                 }
+                case EVENT_CYCLE_CHAUD: { 
+                  chaudiere = 0; 
+                  digitalWrite(PIN_Chaudiere, LOW);  // DesActivation chaudiere
+                  Serial.println("Régulation : Arrêt cycle Chaudière ");
+                  break;
+                }
  
                 case EVENT_GPIO_OFF:  // 0:Defaut secteur, 1:intrusion, 2:autoprotect, 3:marche/arret
                     //Serial.printf("GPIO:defaut secteur =>timer:%i\n\r", evt.data);
@@ -934,31 +956,43 @@ void taskHandler(void *parameter) {
                     Vbatt_Th = 2.0; // permet de savoir, au prochain event, qu'il n'y a pas eu de maj
                   }
 
-                  uint8_t tempI = (uint8_t)(tempI_moy24h/cpt24_Tint*10);
-                  uint8_t tempE = (uint8_t)(tempE_moy24h/cpt24_Text*10);
+                  // erreurs Tint, Text, heure
+                  if (err_Tint)
+                            log_erreur(Code_erreur_Tint, err_Tint,0);
+                  if (err_Text)
+                            log_erreur(Code_erreur_Text, err_Text,0);
+                  if (err_Heure)
+                            log_erreur(Code_erreur_Heure, err_Heure,0);
+                  err_Tint=0;
+                  err_Text=0;
+                  err_Heure=0;
 
-                  writeLog('K', cpt24_Tint,  tempI, tempE, "24H_Temp");
+                  // graphique des temperatures quotidiennes
+                  uint8_t tempI=1, tempE=1, Cout;
+                  if (cpt24_Tint)  tempI = (uint8_t)(tempI_moy24h/cpt24_Tint*10);
+                  if (cpt24_Text)  tempE = (uint8_t)(tempE_moy24h/cpt24_Text*10);
+                  Cout = 0;
+
                   tempI_moy24h=0;
                   tempE_moy24h=0;
                   cpt24_Tint=0;
                   cpt24_Text=0;
+
+                  uint8_t i;
+                  for (i = NB_Val_Graph - 1; i; i--) {
+                    graphique[i][3] = graphique[i - 1][3];
+                    graphique[i][4] = graphique[i - 1][4];
+                    graphique[i][5] = graphique[i - 1][5];
+                  }
+                  graphique[0][3] = tempI;
+                  graphique[0][4] = tempE;
+                  graphique[0][5] = Cout;  
 
                   break;
                 }
 
                 case EVENT_CYCLE:
                   event_mesure_temp();
-                  #ifdef ESP_CHAUDIERE
-                    // Sécurité : si aucune température reçue depuis 1h10 (4200s)
-                    if (millis() - last_remote_temp_time > 4200000)
-                    {
-                      if (HG != 1) {
-                        HG = 1; // Mode Hors Gel
-                        Serial.println("Sécurité : Pas de température reçue depuis 1h10. Passage en mode HORS-GEL.");
-                        writeLog('S', 0, 0, 0, "Secu HG");
-                      }
-                    }
-                  #endif
                   break;
 
                 case EVENT_CYCLE_Compresseur:
@@ -1001,7 +1035,13 @@ void init_rtc_variables()
 
 void init_ram_variables()
 {
+  cpt24h_batt=6;
+  err_Tint=0;
+  err_Text=0;
+  err_Heure=0;
+  nb_err_reseau=0;
   fo_jus=0;
+  chaudiere=0;
   Tint=20.0;
   Text=10.0;
 }
@@ -1096,7 +1136,6 @@ void setup()
 
   heure_arret=0;
   dernier_fct=0;
-  last_remote_temp_time = millis();
 
   Serial.printf("**** Initialisation - reset: %s sleep:%i\n\r",resetREASON0, wakeup_reason );
   //Serial.println(resetReason0);
@@ -1173,7 +1212,6 @@ void setup()
     //esp_sleep_enable_uart_wakeup(UART_NUM_1);  
   #endif
 
-  
 
   // ------  NVS Eeprom  ---------------------
 
@@ -1193,6 +1231,7 @@ void setup()
     Serial.printf("Raz mode reseau Wifi AP : val par defaut 11\n\r");
   }
   else Serial.printf("mode reseau : %i\n\r", mode_reseau);
+
 
   #ifdef NO_RESEAU
     mode_reseau=0;
@@ -1337,9 +1376,11 @@ void setup()
     }
   #endif
 
+
   // -------------- partition "log_flash" custom  pour Write-log -------------------
 
   logPartition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, (esp_partition_subtype_t)0x99, "log_flash");
+
 
   if (!logPartition) {
     Serial.println("Partition 'log_flash' non trouvée !");
@@ -1403,10 +1444,13 @@ void setup()
   xTimer_Watchdog= xTimerCreate ("Watchdog", (uint32_t)WDT_TIMEOUT*(300/portTICK_PERIOD_MS), pdTRUE, (void *) 0, vTimerWatchdogCallback);
   if (xTimer_Watchdog == NULL)  Serial.println("Erreur : timer xTimer_Watchdog non créé !");
 
-  // Timer de Délai pour activation chaudiere
+  // Timer de Délai d'attente pour activation chaudiere
   xTimer_activ_chaud= xTimerCreate ("marche_chaud", (uint32_t)1*(300/portTICK_PERIOD_MS), pdFALSE, (void *) 0, vTimerMarChaudCallback);
   if (xTimer_activ_chaud == NULL)  Serial.println("Erreur : timer xTimer_marche_chaudiere non créé !");
 
+  // Timer de cycle chaudiere
+  xTimer_cycle_chaud= xTimerCreate ("cycle_chaud", (uint32_t)1*(300/portTICK_PERIOD_MS), pdFALSE, (void *) 0, vTimerCycleChaudCallback);
+  if (xTimer_cycle_chaud == NULL)  Serial.println("Erreur : timer xTimer_cycle_chaudiere non créé !");
 
   #ifdef WatchDog
     esp_task_wdt_reset();
@@ -1588,6 +1632,7 @@ void setup()
     Serial.println("OTA prêt");
   #endif  // fin OTA
 
+  maj_etat_chaudiere_delai(25);
 
   Serial.println("fin setup:");
 
@@ -1631,6 +1676,7 @@ void lectureHeure() {
   int nb_annees = timeinfo.tm_year + 1900 - 2020;
   date_ac = timeinfo.tm_yday + 365 * nb_annees + (nb_annees + 3) / 4;  // Nombre de jours depuis le 1/1/2020
   //Serial.println(heure_string);
+  last_remote_heure_time = millis();
 }
 
 
@@ -1742,7 +1788,8 @@ void log_erreur(uint8_t code, uint8_t valeur, uint8_t val2)  // Code:1:Tint, 2:T
 
   Serial.printf("date de l'erreur:%i:%i:%i\n\r", timeinfo.tm_mday, timeinfo.tm_hour, timeinfo.tm_min);
   delay(100);
-  writeLog('E', code, valeur, val2, "Err");
+  
+  if (code >3)  writeLog('E', code, valeur, val2, "Err"); // pas de write pour Tint, Text, Heure
 
 
 }
@@ -2574,36 +2621,6 @@ uint8_t requete_GetReg(int reg, float *valeur) {
   }
 
 
-  if (reg == 30)  // registre 30 : index
-  {
-    res = 0;
-    *valeur = index_val;
-  }
-  if (reg == 31)  // registre 31 : graphique Temp int
-  {
-    if (NB_Graphique)
-    {
-      res = 0;
-      *valeur = (float)graphique[index_val][0] / 10;
-    }
-  }
-  if (reg == 32)  // registre 32 : graphique Temp ext
-  {
-    if (NB_Graphique>1)
-    {
-      res = 0;
-      *valeur = (float)graphique[index_val][1] / 10;
-    }
-  }
-  if (reg == 33)  // registre 33 : graphique TPAC
-  {
-    if (NB_Graphique>2)
-    {
-      res = 0;
-      *valeur = (float)graphique[index_val][2] / 10;
-    }
-  }
-
   if (reg == 41)  // registre 41 : canal WiFi actuel
   {
     res = 0;
@@ -2775,7 +2792,9 @@ void requete_status(char *json_response, uint8_t socket, uint8_t type)
   //Text_erreur = lecture_Text(&Text);
   //if (Text_erreur) Text = 15;
 
-  int sec = millis() / 1000;  // 65000
+  unsigned long mill = millis();
+
+  int sec = mill / 1000;  // 65000
   int min = (sec / 60) % 60;  //
   int hour = (sec / 3600) % 24;
   int day = (sec / 3600 / 24);
@@ -2808,18 +2827,18 @@ void requete_status(char *json_response, uint8_t socket, uint8_t type)
   p += sprintf(p, "\"Tint\":%.1f,", Tint);
   p += sprintf(p, "\"Text\":%.1f,", Text);
 
-  float Cons = (float)Consigne/10;
-  if (fo_co) Cons = (float)fo_co/10;
-  p += sprintf(p, "\"consigne\":%.1f,", Cons);
+  uint8_t Cons = (uint8_t)Consigne;
+  if (fo_jus) Cons = fo_co;
+  p += sprintf(p, "\"consigne\":%i,", Cons);
 
   p += sprintf(p, "\"fo_jus\":%i,", fo_jus);
   p += sprintf(p, "\"planning\":%i,", planning);
   p += sprintf(p, "\"vacances\":%i,", vacances);
-  p += sprintf(p, "\"va_cons\":%.1f,", (float)va_cons/10);
-  p += sprintf(p, "\"va_date\":%i,", va_date);
+  p += sprintf(p, "\"va_cons\":%i,", va_cons);
+  p += sprintf(p, "\"va_date\":%i,", va_date-date_ac);
   p += sprintf(p, "\"va_heure\":%i,", va_heure);
   p += sprintf(p, "\"cons_fixe\":%i,", cons_fixe);
-  p += sprintf(p, "\"co_fi\":%.1f,", (float)co_fi/10);
+  p += sprintf(p, "\"co_fi\":%i,", co_fi);
 
 
   p += sprintf(p, "\"Kp\":%.2f,", Kp);
@@ -2832,7 +2851,7 @@ void requete_status(char *json_response, uint8_t socket, uint8_t type)
   p += sprintf(p, "\"DerFct\":%i,", dernier_fct);
   p += sprintf(p, "\"DerFin\":%i,", heure_arret);
   p += sprintf(p, "\"MMC\":%i,", MMCh-1);
-  uint16_t last_temp_time = (last_remote_temp_time/1000/60);  // temps en minutes
+  uint16_t last_temp_time = (mill - last_remote_Tint_time)/1000/60;  // temps en minutes
   p += sprintf(p, "\"LRTT\":%i,", last_temp_time);
 
 
@@ -2857,6 +2876,7 @@ void requete_status(char *json_response, uint8_t socket, uint8_t type)
   // Tableaux : E(erreurs) T(temp)
   if (!type)  // pas d'envoi des graphiques si type=1(maj)
   {
+    // Nota: les 0 sont sautés
     uint8_t j;  // 10 car par valeur => 1000 car par graphique
     for (j = 0; j < NB_Graphique; j++) {
       // valeurs de temperature
@@ -3303,7 +3323,7 @@ void chgtPage(void)
 // ecriture d'un log de 16 caractères : Timestamp(4), code, C1, C2, C3, 8 caractères
 void writeLog(uint8_t code, uint8_t c1, uint8_t c2, uint8_t c3, const char* message)
 {
-  if (!log_err)
+  if ((!log_err) && (logPartition))
   {
     if ((!activePage) || (!activeIndex))
         getActiveIndex(&activePage, &activeIndex);
@@ -3503,6 +3523,8 @@ void loop()
     esp_task_wdt_reset();
   #endif
 
+  //Serial.printf("PIN_4 state = %d\n", digitalRead(PIN_REVEIL));
+
   //heap_caps_check_integrity_all(true);  // place ce test dans ton loop()
 
   #ifdef OTA
@@ -3514,15 +3536,12 @@ void loop()
     if (force_stay_awake) {
       if (millis() - wake_up_time > 30000) {
          Serial.println("Délai de configuration de 30s expiré. Passage en Deep Sleep...");
-         Serial.flush();
          delay(100);
-         
+
          uint64_t sleep_time = (uint64_t)periode_cycle * 60 * 1000000;
          if (mode_rapide==12)
           sleep_time = (uint64_t)periode_cycle * 1000000;
-         esp_sleep_enable_timer_wakeup(sleep_time);
-         esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_REVEIL, 0); // Réveil par bouton (0 = bas)
-         esp_deep_sleep_start();
+          passage_deep_sleep(sleep_time);
       }
     }
   #endif
@@ -3532,6 +3551,27 @@ void loop()
   //vTaskDelay(300 / portTICK_PERIOD_MS); // Petite pause
 
 }
+
+void passage_deep_sleep(uint64_t temps)
+{
+  uint64_t sleep_us = min(temps, 15ULL * 60ULL * 1000000ULL);
+
+  Serial.printf("PIN_REVEIL state = %d\n", digitalRead(PIN_REVEIL));
+  Serial.flush();
+
+  Serial.printf("Passage deep sleep pour %llu\n", (unsigned long long)sleep_us);
+  Serial.flush();
+  delay(100);
+
+  esp_sleep_enable_timer_wakeup(temps);
+  #ifdef ESP32_v1
+    esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_REVEIL, 0); // Réveil par bouton (0 = bas)
+  #else  // Firebeetle
+  esp_sleep_enable_ext1_wakeup( 1ULL << PIN_REVEIL,  ESP_EXT1_WAKEUP_ALL_LOW);
+  #endif
+  esp_deep_sleep_start();
+}
+
 
 // permt de test que mon serveur répond bien , en boucle locale
 // err:0:ok  1:non connecté, 2:erreur serveur
@@ -3750,6 +3790,19 @@ server.on("/verif", HTTP_GET, [](AsyncWebServerRequest *request){
     buffer_dmp[0]=0;
       char *p = json_response;
 
+    // Vérification origine
+    IPAddress clientIP = request->client()->remoteIP();
+    if (clientIP[0] == 192 && clientIP[1] == 168  && clientIP[3] != 1)
+    {
+        #ifndef Sans_securite
+          xTimerStop(xTimer_Securite,100);
+          xTimerChangePeriod(xTimer_Securite,(uint32_t)2*60*(1000/portTICK_PERIOD_MS),100);
+          xTimerStart(xTimer_Securite,100);  // permet de couper la securite au bout de 2 minutes
+        #endif
+        cpt_securite = 1;
+        //Serial.println("Requête depuis LAN");
+    }
+
     if ((request->hasParam("type")) && (request->hasParam("reg")) && (request->hasParam("val")))
     {
       type = request->getParam("type")->value().toInt();
@@ -3806,7 +3859,7 @@ server.on("/verif", HTTP_GET, [](AsyncWebServerRequest *request){
       type = request->getParam("type")->value().toInt();
 
 
-    IPAddress clientIP = request->client()->remoteIP();
+    /*IPAddress clientIP = request->client()->remoteIP();
 
     #ifdef DEBUG
         Serial.print("Client IP : ");
@@ -3815,7 +3868,7 @@ server.on("/verif", HTTP_GET, [](AsyncWebServerRequest *request){
 
     // Vérification origine
     uint8_t orig=1;  // 0:local
-    if (clientIP[0] == 192 && clientIP[1] == 168 && clientIP[2] == 251 && clientIP[3] != 1) {
+    if (clientIP[0] == 192 && clientIP[1] == 168  && clientIP[3] != 1) {
         Serial.println("Requête depuis LAN");
         orig=0;
     }
@@ -3832,7 +3885,7 @@ server.on("/verif", HTTP_GET, [](AsyncWebServerRequest *request){
           xTimerStart(xTimer_Securite,100);  // permet de couper la securite au bout de 2 minutes
           cpt_securite = 1;
         #endif
-    }
+    }*/
 
     requete_status(buffer_dmp, 0, type);
 

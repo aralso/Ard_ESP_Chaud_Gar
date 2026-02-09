@@ -17,10 +17,15 @@ const char index_html[] PROGMEM = R"rawliteral(
   #nav-toggle {cursor: pointer;display: block}
   #nav-toggle-cb {outline: 0;opacity: 0;width: 0;height: 0}
   #nav-toggle-cb:checked+#menu {display: flex}
+  .alert-icon {  color: #d00000; margin-right: 6px; }
+  .forcage-label { color: #d00000;   /* rouge lisible */  font-weight: 600; /* optionnel */}
   .input-group { display: flex; flex-wrap: nowrap; line-height: 22px; margin: 5px 0 }
 
   .input-group>label { display: inline-block; padding-right: 10px;  min-width: 10px }
   .input-group input,.input-group select {  flex-grow: 1 }
+  .input2-group {  display: flex; flex-direction: column; gap: 6px; }
+  .input2-group>label { display: inline-block; padding-right: 10px;  min-width: 10px }
+  .input2-group input,.input2-group select {  flex-grow: 1 }
   .switch { display: block;position: relative;line-height: 22px;font-size: 16px;height: 22px}
   .switch input {outline: 0;opacity: 0;width: 0;height: 0}
   .slider {width: 50px;height: 22px;border-radius: 22px;cursor: pointer;background-color: grey}
@@ -40,6 +45,19 @@ const char index_html[] PROGMEM = R"rawliteral(
   label.toggle-section-label { cursor: pointer; display: block }
   input.toggle-section-button {outline: 0;opacity: 0;width: 0;height: 0}
   input.toggle-section-button:checked+section.toggle-section {display: none}
+  .cancel-btn {    margin-left: 8px;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: none;
+    background-color: #e74c3c;
+    color: white;
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+    line-height: 26px;
+    text-align: center;}
+  .cancel-btn:hover {background-color: #c0392b;}
   .led-red {
     background:#fe0206;
     border-radius:10px;
@@ -59,10 +77,14 @@ const char index_html[] PROGMEM = R"rawliteral(
   table.pgm th, table.pgm td { border: 1px solid #555; padding: 4px; text-align: center; }
   table.pgm input { width: 40px; background: #333; color: #fff; border: 1px solid #666; text-align: center; }
   table.pgm select { background: #333; color: #fff; border: 1px solid #666; font-size: 12px; }
-#consigne-group {
-    position: relative;
-    display: inline-block;
-}
+.inline-group { display: flex;  align-items: center; gap: 12px; }
+#co_fi-group { display: none; margin-left: 20px; }
+#vac-d-group { display: none; flex-direction: column; width: 100%; margin-top: 6px; }
+#vac-d-group .input-group { padding-left: 20px; }
+.vac-details { width: 100%; display: flex; flex-direction: column; margin-left: 6px;  margin-top: 6px; }
+#Tint-mess-group { display: none; margin-left: 20px; }
+#jusque-group { display: none; margin-left: 20px; }
+#consigne-group { position: relative; display: inline-block; }
 
 .dropdown {
     position: absolute;
@@ -106,6 +128,16 @@ const char index_html[] PROGMEM = R"rawliteral(
                 </div>
             </div>
 
+            <div class="input-group" id="Tint-mess-group">
+              <label for="LRTT"></label>
+              <div class="text">
+              <span class="alert-icon">⚠️</span>
+              Sonde deconnecté depuis
+                <input id="LRTT" type="text" minlength="1" maxlength="4" size="4"
+                      class="default-action"> heures
+              </div>
+            </div>
+
 
             <div class="input-group" id="consigne-group">
                 <label for="consigne">Consigne</label>
@@ -113,8 +145,15 @@ const char index_html[] PROGMEM = R"rawliteral(
             </div>
 
             <div class="input-group" id="jusque-group">
-                <label for="fo_jus">Forcage consigne pendant: </label> 
-                <input id="fo_jus" type="text" size="6" class="default-action">min
+                <label for="fo_jus">
+                    <span class="forcage-label">Forçage consigne</span> pendant :
+                </label> 
+                <div class="text">
+                    <span id="fo_jus" class="default-action"></span>&nbsp&nbspmin
+                </div>
+                <button id="fo_cancel" class="cancel-btn" title="Annuler le forçage">
+                   ✕
+                </button>                
             </div>
 
             <div class="input-group">
@@ -126,7 +165,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 
 
             <div class="input-group" id="PL-group">
-              <label for="planning">Planning</label>
+              <label for="planning">Programme</label>
               <div class="switch">
                   <input id="planning" type="checkbox"  class="default-action">
                   <label class="slider" for="planning"></label>
@@ -138,50 +177,38 @@ const char index_html[] PROGMEM = R"rawliteral(
               </div>                  
             </div>
 
-            <div class="input-group" id="vac-group">
+            <div class="input2-group " id="vac-group">
               <label for="vacances">Vacances</label>
-              <div class="switch">
-                  <input id="vacances" type="checkbox"  class="default-action">
-                  <label class="slider" for="vacances"></label>
-              </div>
-              <div class="default-action">
-                <div class="container">
-                  <div id="vacances_led" class="default-action" ></div>
+              <div class="switch-container" style="display: flex; align-items: center; gap: 10px;">
+                <div class="switch">
+                    <input id="vacances" type="checkbox"  class="default-action">
+                    <label class="slider" for="vacances"></label>
                 </div>
+                <div id="vacances_led" class="default-action" ></div>
               </div>                  
+              <div id="vac-d-group">
+                <div class="input-group">
+                  <label for="va_date">Date fin :</label>
+                  <div class="text">
+                    <div id="va_date_value" style="width: 30px; display: inline-block;"></div>
+                    <input id="va_date" type="range" min="0" max="90" value="0"
+                          class="default-action">
+                    &nbsp;jours
+                  </div>
+                </div>
+
+                <div class="input-group">
+                  <label for="va_heure">Heure fin :</label>
+                  <div class="text">
+                    <input id="va_heure" type="text" size="6" class="default-action"> h
+                  </div>
+                </div>
+
+              </div>
             </div>
 
-              <div>
-                <label for="vac-toggle-prog" class="toggle-section-label">
-                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#f00a0a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
-                  </label>
-                  <input type="checkbox" id="vac-toggle-prog" class="hidden toggle-section-button" checked="checked">
-                <section class="toggle-section">
-                  <div class="input-group">
-                    <label for="va_cons">Consigne:</label>
-                    <div class="text">
-                      <input id="va_cons" type="text" minlength="1" maxlength="4" size="4" value="12" class="default-action">°C
-                    </div>
-                  </div>
 
-                  <div class="input-group">
-                    <label for="va_date">Date fin:</label>
-                    <div class="text">
-                      <div id="va_date_value" style="width: 30px; display: inline-block;"></div>
-                      <input id="va_date" type="range" min="0" max="90" value="0" class="default-action">
-                      &nbsp;jours
-                    </div>
-                  </div>
-                  <div class="input-group"><label for="va_heure">heure fin:</label>
-                    <div class="text">
-                      </p> <input id="va-heure" type="text" size="6" class="default-action">h
-                    </div>
-                  </div>
-                </section>
-              </div>
-
-
-            <div class="input-group" id="PL-group">
+            <div class="input-group inline-group" id="CS-group">
               <label for="cons_fixe">Consigne fixe</label>
               <div class="switch">
                   <input id="cons_fixe" type="checkbox"  class="default-action">
@@ -192,22 +219,15 @@ const char index_html[] PROGMEM = R"rawliteral(
                   <div id="cons_fixe_led" class="default-action" ></div>
                 </div>
               </div>                  
-            </div>
 
-              <div>
-                <label for="cf-toggle-prog" class="toggle-section-label">
-                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#f00a0a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
-                  </label>
-                  <input type="checkbox" id="cf-toggle-prog" class="hidden toggle-section-button" checked="checked">
-                <section class="toggle-section">
-                  <div class="input-group">
-                    <label for="co_fi">val:</label>
-                    <div class="text">
-                      <input id="co_fi" type="text" minlength="1" maxlength="4" size="4" value="14" class="default-action">°C
-                    </div>
-                  </div>
-                </section>
+              <div class="input-group" id="co_fi-group">
+                <label for="co_fi"></label>
+                <div class="text">
+                  <input id="co_fi" type="text" minlength="1" maxlength="4" size="4"
+                        class="default-action"> °C
+                </div>
               </div>
+            </div>
 
             <p>Graphique Temperature : </p>
             <canvas id = "schema" height="130" width="203" style="border:1px solid" class="graph-group">
@@ -285,88 +305,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 
           <button onclick="fetchStatusData()">maj</button>
 
-            <div class="input-group">
-                <label for="tempEx">Température ext :</label>
-                <div class="text">
-                    <span id="TEx" class="default-action"></span>&deg;C&nbsp&nbsp&nbsp&nbsp
-                    <span id="TEx1" class="default-action"></span>&deg;C&nbsp&nbsp&nbsp&nbsp
-                    <span id="TEx24" class="default-action"></span>&deg;C&nbsp&nbsp&nbsp&nbsp
-                </div>
-            </div>
-            <div class="input-group">
-                <label for="tempCcE">Température ecrite consigne chauffage :</label>
-                <div class="text">
-                    <span id="TCcE" class="default-action"></span>&deg;C&nbsp&nbsp&nbsp&nbsp
-                </div>
-            </div>
-            <div class="input-group">
-                <label for="tempCc">Température consigne chauffage :</label>
-                <div class="text">
-                    <span id="TCc" class="default-action"></span>&deg;C&nbsp&nbsp&nbsp&nbsp
-                </div>
-            </div>
-            <div class="input-group">
-                <label for="tempCh">Température chauffage :</label>
-                <div class="text">
-                    <span id="TCh" class="default-action"></span>&deg;C&nbsp&nbsp&nbsp&nbsp
-                </div>
-            </div>
-            <div class="input-group">
-                <label for="tempRe">Température retour :</label>
-                <div class="text">
-                    <span id="TRe" class="default-action"></span>&deg;C&nbsp&nbsp&nbsp&nbsp
-                </div>
-            </div>
-            <div class="input-group">
-                <label for="tempDe">Température départ :</label>
-                <div class="text">
-                    <span id="TDe" class="default-action"></span>&deg;C&nbsp&nbsp&nbsp&nbsp
-                </div>
-            </div>
 
-            <div class="input-group">
-                <label for="tempDc">Température départ captage :</label>
-                <div class="text">
-                    <span id="TDc" class="default-action"></span>&deg;C&nbsp&nbsp&nbsp&nbsp
-                </div>
-            </div>
-            <div class="input-group">
-                <label for="tempRc">Température retour captage :</label>
-                <div class="text">
-                    <span id="TRc" class="default-action"></span>&deg;C&nbsp&nbsp&nbsp&nbsp
-                </div>
-            </div>
-            <div class="input-group">
-                <label for="tempEv">Température Evaporation :</label>
-                <div class="text">
-                    <span id="TEv" class="default-action"></span>&deg;C&nbsp&nbsp&nbsp&nbsp
-                </div>
-            </div>
-
-            <div class="input-group">
-                <label for="tempCB">Température consigne ballon :</label>
-                <div class="text">
-                    <span id="TCB" class="default-action"></span>&deg;C&nbsp&nbsp&nbsp&nbsp
-                </div>
-            </div>
-            <div class="input-group">
-                <label for="tempBa">Température ballon :</label>
-                <div class="text">
-                    <span id="TBa" class="default-action"></span>&deg;C&nbsp&nbsp&nbsp&nbsp
-                </div>
-            </div>
-            <div class="input-group">
-                <label for="marcheBall">Activation ballon :</label>
-                <div class="text">
-                    <span id="MMB" class="default-action"></span>&nbsp&nbsp&nbsp&nbsp
-                </div>
-            </div>
-            <div class="input-group">
-                <label for="heure_comp">Heures fct compresseur :</label>
-                <div class="text">
-                    <span id="HCOMP" class="default-action"></span>&nbsp&nbsp&nbsp&nbsp
-                </div>
-            </div>
 
             <div class="input-group" id="MMC-group">
               <label for="MMC">Chauffage</label>
@@ -381,35 +320,12 @@ const char index_html[] PROGMEM = R"rawliteral(
               </div>                  
             </div>
 
-            <div class="input-group">
-              <label for="compress">Fct compresseur:</label>
-              <div class="container">
-                <div id="etat_compr" class="default-action"></div>
-              </div>
-              <p>Dernier cycle: <span id="DerFct" class="default-action"></span>min</p>
-              <p>Fini depuis: <span id="DerFin" class="default-action"></span>min</p>
-            </div>
 
-            <div class="temperature default-action">
-              <p>loi d'eau <span id="Tloi">--</span>°C</p>
-              <p>T.obj: <span id="Tobj">--</span>°C</p>
-              <p>PID: <span id="Output">--</span>°C</p>
-            </div>
-            <div class="temperature default-action">
-              <P>Kp:<span id="Kp">--</span></p>
-              <P>Ki:<span id="Ki">--</span></p>
-              <P>Kd:<span id="Kd">--</span></p>
-            </div>
-
-            <p>Graphique Cycles compresseur : </p>
-            <canvas id = "schemaD" height="130" width="203" style="border:1px solid" class="graph-group">
+            <p>Graphique 24h : </p>
+            <canvas id = "schema2" height="130" width="203" style="border:1px solid" class="graph-group">
               Votre navigateur ne supporte pas la balise canvas
             </canvas>
 
-            <p>Graphique Temperature min d'Evaporation : </p>
-            <canvas id = "schemaE" height="130" width="203" style="border:1px solid" class="graph-group">
-              Votre navigateur ne supporte pas la balise canvas
-            </canvas>
 
           </section>          
 
@@ -453,26 +369,6 @@ const char index_html[] PROGMEM = R"rawliteral(
                   6 : log detail : 0:rien 4:max<br>
                   7 : délai écoute websocket<br>
                   8 : Skip graph : 1 valeur sur X<br>
-                  10 : mode PID (1:normal 2:loiEau 3:fixe)<br>
-                  11 : Teau fixe (mode=3)  10°C a 30°C<br>
-                  12 : Kp  <br>
-                  13 : Ki <br>
-                  14 : Kd <br>
-                  15 : Loi d'eau : Point 1 (-5°)<br>
-                  16 : Loi d'eau : Temp au Point 1<br>
-                  17 : Loi d'eau : Point 2 (20°C)<br>
-                  18 : Loi d'eau : Temp Point 2<br>
-                  19 : loi_eau_Tint<br>
-                  21 : Valeur PID  (lecture)<br>
-                  22 : Min_max_pid<br>
-                  23 : TPAC min<br>
-                  24 : TPAC max<br>
-                  25 : Seuil Temp Evaporation<br>
-                  30 : index pour graphiques<br>
-                  31 : graphique_temp int<br>
-                  32 : graphique_temp ext<br>
-                  33: graphique_temp pac<br>
-                  40 : mode : 1:PAC 2:PAC+Rad 3:Rad<br>
                   41 : canal wifi
                   42 : canal wifi prérentiel (thermom)
                   <br>
@@ -596,14 +492,73 @@ const char index_html[] PROGMEM = R"rawliteral(
        var baseHost = document.location.origin;
 
 
+      function updateCoFiVisibility(cons_fixe) {
+          const group = document.getElementById("co_fi-group");
+          if (!group) return;
+          group.style.display = cons_fixe ? "flex" : "none";
+      }
+      function updateTintVisibility(TintM) {
+          const group = document.getElementById("Tint-mess-group");
+          if (!group) return;
+          group.style.display = TintM ? "flex" : "none";
+      }
+      function updateVacaVisibility(vacances) {
+          const group = document.getElementById("vac-d-group");
+          if (!group) return;
+          group.style.display = vacances ? "flex" : "none";
+      }
       function updateJusqueGroup(fo_jus)
       {
-      const group = document.getElementById("jusque-group");
-      if (fo_jus != 0)
-          group.style.display = "block";
-      else
-          group.style.display = "none";
+        const group = document.getElementById("jusque-group");
+        if (fo_jus != 0)
+            group.style.display = "flex";
+        else
+            group.style.display = "none";
       }
+
+      const scale = {
+          co_fi: 10,
+          fo_co: 10,
+          consigne: 10,
+          va_cons: 10,
+          // ajouter ici tous les autres champs à diviser par 10
+      };
+
+      document.getElementById("va_date").addEventListener("input", function () {
+        document.getElementById("va_date_value").textContent = this.value;
+      });
+
+      document.getElementById("fo_cancel").addEventListener("click", () => {
+          updateJusqueGroup(0);
+          sendValueToESP("fo_jus", 0);
+      });
+
+      document.getElementById("cons_fixe").addEventListener("change", function () {
+          updateCoFiVisibility(this.checked ? 1 : 0);
+      });
+      document.getElementById("vacances").addEventListener("change", function () {
+          updateVacaVisibility(this.checked ? 1 : 0);
+      });
+      document.getElementById("LRTT").addEventListener("change", function () {
+          updateTintVisibility(this.checked ? 1 : 0);
+      });
+
+      document.getElementById("consigne").addEventListener("change", function () {
+          const valeurConsigne = this.value;
+          if (valeurConsigne === "") return;
+
+          const heures = prompt("Durée du forçage consigne (en heures) :",  "2" );
+
+          if (heures === null) { return;  } // utilisateur a annulé
+
+          const duree = parseInt(heures, 10);
+          if (isNaN(duree) || duree <= 0 || duree > 15) { alert("Durée invalide"); return; }
+
+          console.log("Nouvelle consigne :", valeurConsigne);
+          console.log("Forçage pendant :", duree, "heures");
+          const dureeMinutes = duree * 60;
+          sendValueToESP("fo_jus", dureeMinutes);
+      });
       
       const updateValue = (el, value, updateRemote) => {   // mise à jour de la valeur sur la page web
         updateRemote = updateRemote == null ? true : updateRemote
@@ -684,8 +639,13 @@ const char index_html[] PROGMEM = R"rawliteral(
               return response.json()
           })
           .then(function (state) {
-              if (state.val !== undefined)
-               updateValue(el, state.val, false)
+              if (state.val !== undefined) {
+                let value = state.val;
+                if (scale[el.id]) {
+                  value = (value / scale[el.id]).toFixed(1);
+                }
+                updateValue(el, value, false);
+              }
           })
       }
 
@@ -803,6 +763,16 @@ const char index_html[] PROGMEM = R"rawliteral(
           })
       }
 
+      function sendValueToESP(id, value) {
+          const query = `${baseHost}/Set?type=1&reg=${id}&val=${value}`;
+
+          fetch(query)
+            .then(response => {
+                console.log(`request to ${query} finished, status: ${response.status}`);
+                setTimeout(() => { get_value(id); }, 1000);
+            });
+      }
+
 
       function updateConfig (el) {   // modif sur page web : requete / set pour mettre a jour dans le soft
         let value
@@ -832,7 +802,8 @@ const char index_html[] PROGMEM = R"rawliteral(
               setTimeout(() => { get_value('codeR_secu'); }, 1000);
             }
             if ((el.id === 'vacances') || (el.id === 'planning')
-            || (el.id === 'co_fi') || (el.id === 'cons_fixe')) {
+            || (el.id === 'co_fi') || (el.id === 'cons_fixe')
+            || (el.id === 'MMC')) {
               setTimeout(() => { get_value(el.id); }, 1000);
             }
           })
@@ -867,10 +838,18 @@ const char index_html[] PROGMEM = R"rawliteral(
         document
           .querySelectorAll('.default-action, .temperature span')  
           .forEach(el => {
-            if (state[el.id] !== undefined)
-            updateValue(el, state[el.id], false)
+            if (state[el.id] !== undefined) {
+              let value = state[el.id];
+              if (scale[el.id]) {
+                value = (value / scale[el.id]).toFixed(1);
+              }
+              updateValue(el, value, false)
+            }
           })
 
+        if (state.cons_fixe !== undefined) {
+            updateCoFiVisibility(Number(state.cons_fixe));
+        }
         if (state.fo_jus !== undefined) {
             updateJusqueGroup(parseInt(state.fo_jus));
         }
@@ -970,8 +949,7 @@ const char index_html[] PROGMEM = R"rawliteral(
         if (!maj)
         {
           dessine_graphe_temp();
-          dessine_graphe_duree();
-          dessine_graphe_evapo();
+          dessine_graphe_24h();
           }
         maj=1; // pour les maj suivantes => pas de graphique
       }
@@ -1004,7 +982,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       {
         if (num==0)  graphe.strokeStyle = "#00f808"; //int-vert
         if (num==1)  graphe.strokeStyle = "#0098f8"; //ext-bleu
-        if (num==2)  graphe.strokeStyle = "#f84200"; //eau-rouge
+        if (num==2)  graphe.strokeStyle = "#f84200"; //chaud-rouge
         graphe.beginPath();
         graphe.moveTo(zone_dessin.width,(vert_max-f(num,0))*130/(vert_max-vert_min));
         compteur=1;
@@ -1043,15 +1021,15 @@ const char index_html[] PROGMEM = R"rawliteral(
       graphe.fillText(vert_max,5,8);
     }
 
-    // Graphiques des duree compresseur : graph N°3 et graph N°4
-    function dessine_graphe_duree()
+    // Graphiques des Temp chaque 24 heures
+    function dessine_graphe_24h()
     {
-      var zone_dessin = document.getElementById("schemaD");
+      var zone_dessin = document.getElementById("schema2");
       var graphe= zone_dessin.getContext("2d");
       var compteur=0;
-      var vert_min = 150; // max actif 150min repos:600min(10h) 
-      var vert_max = 0;
-      for (j=0; j<2; j++)
+      var vert_min = 35;  
+      var vert_max = -10;
+      for (j=0; j<3; j++)
       {
         for (i=0; i<NB_Val_Graph; i++)
         {
@@ -1059,17 +1037,18 @@ const char index_html[] PROGMEM = R"rawliteral(
           if (f(j,i)>vert_max) vert_max=f(j,i);
         }
       }
-      if (vert_min<0) vert_min=0;
-      if (vert_max>150) vert_max=150;
+      if (vert_min<-10) vert_min=-10;
+      if (vert_max>35) vert_max=35;
       vert_min = Math.floor(vert_min);
       vert_max = Math.ceil(vert_max);
           
       graphe.lineWidth=2;
 
-      for (num=0; num<2; num++)
+      for (num=0; num<3; num++)
       {
-        if (num==0)  graphe.strokeStyle = "#f84200"; //graph 3 : actif-rouge
-        if (num==1)  graphe.strokeStyle = "#00f808"; //graph 4 : repos-vert
+        if (num==0)  graphe.strokeStyle = "#00f808"; //graph 3 : Tint24h vert
+        if (num==1)  graphe.strokeStyle = "#0098f8"; //graph 4 : Text24h bleu
+        if (num==2)  graphe.strokeStyle = "#f84200"; //graph 5 : Cout chaud-rouge
         graphe.beginPath();
         graphe.moveTo(zone_dessin.width,(vert_max-f(num,0))*130/(vert_max-vert_min));
         compteur=1;
@@ -1108,69 +1087,6 @@ const char index_html[] PROGMEM = R"rawliteral(
       graphe.fillText(vert_max,5,8);
     }
 
-    // Graphique temp min d'evaporation   N°5  -20°C à 10°C  100 à 400
-    function dessine_graphe_evapo()
-    {
-      var zone_dessin = document.getElementById("schemaE");
-      var graphe= zone_dessin.getContext("2d");
-      var compteur=0;
-      var vert_min = 10;
-      var vert_max = -20;
-      for (j=0; j<1; j++)
-      {
-        for (i=0; i<NB_Val_Graph; i++)
-        {
-          if (f(j,i)<vert_min) vert_min=f(j,i);
-          if (f(j,i)>vert_max) vert_max=f(j,i);
-        }
-      }
-      if (vert_min<-20) vert_min=-20;
-      if (vert_max>10) vert_max=10;
-      vert_min = Math.floor(vert_min);
-      vert_max = Math.ceil(vert_max);
-          
-      graphe.lineWidth=2;
-
-      for (num=0; num<1; num++)
-      {
-        if (num==0)  graphe.strokeStyle = "#f84200"; //evap-rouge
-        graphe.beginPath();
-        graphe.moveTo(zone_dessin.width,(vert_max-f(num,0))*130/(vert_max-vert_min));
-        compteur=1;
-        while(compteur<NB_Val_Graph) {
-          graphe.lineTo(zone_dessin.width-(compteur*zone_dessin.width/NB_Val_Graph),(vert_max-f(num,compteur))*130/(vert_max-vert_min));
-          compteur=(compteur+1);
-        }           
-        graphe.stroke();
-      }
-      function f(num,x) {
-        var y=(graphique[num+5][x])/10-30;
-        return (y);
-      }
-      graphe.beginPath();
-      graphe.lineWidth="1";
-      graphe.strokeStyle="white";
-      graphe.moveTo(0,zone_dessin.height/2);
-      graphe.lineTo(zone_dessin.width,zone_dessin.height/2);  //axe horiz
-      graphe.moveTo(0,zone_dessin.height);   // axe vertical
-      graphe.lineTo(0,0);
-      graphe.moveTo(0,0);
-      graphe.lineTo(5,5);
-
-      //tirets sur axe horizontal
-      var compteur=0;
-      var x=0;
-      while(compteur<12) {
-        graphe.moveTo(x,zone_dessin.height/2-5);
-        graphe.lineTo(x,zone_dessin.height/2+5);
-        compteur=(compteur+1);
-        x = x + zone_dessin.width/12;
-      } 
-      graphe.stroke();
-      graphe.fillStyle = "white";
-      graphe.fillText(vert_min,5,-8+zone_dessin.height);
-      graphe.fillText(vert_max,5,8);
-    }
 
     // Action type 5:
 
