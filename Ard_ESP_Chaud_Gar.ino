@@ -1,11 +1,11 @@
 /* 
 
-TODO : traiter panne routeur => arret esp_now
+TODO : 
     au démarrage, si pas de réseau, pas d'heure : méthode de regul ?
     Sonde Tint defaillante => Text => cycle variable
     ni reseau, ni Tint : cycle constant
 
-v1.6 02/2026 Firebeetle, 
+v1.6 02/2026 Firebeetle, sonde(mode dégradés), Chaud(Batt_sonde_low, freq log batt)
 v1.5 02/2026 esp_sonde et eps_chaudiere ok
 v1.4 02/2026 esp_now
 v1.3 02/2026 OTA, ajout esp32_thermometre, mesure Text par internet
@@ -18,7 +18,7 @@ Interrogation des données par la liaison série (recep_message) : 2-1 (type1, r
 Configuration des options de programmation : 
 - usb CDC on boot :  enable (pour permettre les serial.print)
 - cpu frequency : 
-- code debug level : info  
+- code debug level : non ou info  
 -usb dfu on boot : 
 -usb firmware msc on boot : 
 - Events run on Core 1
@@ -27,6 +27,7 @@ Configuration des options de programmation :
 - jtag adaptater : 
 - upload mode: Uart0
 - usb mode : hardware cdc & jtag (usage basique)
+- partition : custom (pour permettre code>1,5MOctets)
 */
 
 #define ESP_CHAUDIERE      // Rôle principal : gestion de la chaudière
@@ -42,7 +43,7 @@ Configuration des options de programmation :
   #define ESP32_Fire2
   #define Temp_int_HDC1080  // Capteur I2C HDC1080
   #define MODE_Wifi  // Wifi sinon Ethernet
-  #define Sans_securite
+  //#define Sans_securite
   #define Sans_websocket
   #ifdef DEBUG   // debug
   #endif
@@ -255,6 +256,7 @@ time_t now;
 uint8_t init_time = 0;  // 0:pas initialisé, 1:à8h, 3:avec internet
 RTC_DATA_ATTR uint8_t last_wifi_channel; // Mémorisation du canal Wifi en DeepSleep
 float Vbatt_Th = 0.0;   // Stockage tension batterie distante
+bool Vbatt_Th_I = 0;
 
 RTC_DATA_ATTR uint8_t periode_cycle;
 
@@ -736,7 +738,7 @@ void taskHandler(void *parameter) {
     systeme_eve_t evt;
     #ifdef WatchDog
       esp_err_t status = esp_task_wdt_add(NULL);  //add current thread to WDT watch
-      Serial.printf("enreg wdt taskhandler : %i\n\r", status);
+      //Serial.printf("enreg wdt taskhandler : %i\n\r", status);
     #endif
 
     Serial.printf("Taskhandler : coeur %d\n\r", xPortGetCoreID());
@@ -889,12 +891,13 @@ void taskHandler(void *parameter) {
                     if ((test_wifi != 3) || (test_goog))
                     {
                       Serial.println("pas de connec reseau");
+                      delay(100);
                       nb_err_reseau++;
                       if (mode_reseau!=14)
                       { 
-                        server.end();  // sécuriser l'état précédent
+                        //server.end();  // sécuriser l'état précédent
                         reConnectWifi();
-                        startWebServer();
+                        //startWebServer();
                       }
                     }
                     else
@@ -905,12 +908,15 @@ void taskHandler(void *parameter) {
 
                 case EVENT_24H:
                 {
-                  
+                  uint8_t test_goog=0, test_wifi=3;                  
                   getLocalTime(&timeinfo);  // déclenche resynchro réseau à chaque appel. 5s si pb reseau
 
                   // faire un ping pour vérifier que la liaison IP fonctionne
-                  uint8_t test_goog = testConnexionGoogle();
-                  uint8_t test_wifi = WiFi.status();
+                  if (mode_reseau==13)
+                  {
+                    test_goog = testConnexionGoogle();
+                    test_wifi = WiFi.status();
+                  }
                   #ifndef NO_RESEAU
                     if (mode_reseau != 14)
                       test_wifi = WiFi.status();
@@ -943,17 +949,19 @@ void taskHandler(void *parameter) {
                     #endif
                   }
 
-                    // Log toutes les semaines : nb d'erreurs wifi et batteries
+                    // Log toutes les jours/semaines : nb d'erreurs wifi et batteries
                   cpt24h_batt++;
-                  if (cpt24h_batt > 6)  // 1er log au bout d'une journée 
+                  if (cpt24h_batt >= Nb_jours_Batt_log)  // log chaque X jour 
                   {
                     cpt24h_batt=0;
                     float vbatt = readBatteryVoltage();
                     //Serial.printf("Tension Batterie 24h : %.2f V\n", vbatt);
                     if (nb_err_reseau>255) nb_err_reseau=255;
-                    writeLog('K', (uint8_t)((vbatt-2.0)*100), (uint8_t)((Vbatt_Th-2.0)*100), (uint8_t)nb_err_reseau, "24H_Res");
+                    uint8_t val_batt_sonde = (uint8_t)((Vbatt_Th-2.0)*100);
+                    if (!Vbatt_Th_I) val_batt_sonde =0; // V_bat non recu
+                    writeLog('K', (uint8_t)((vbatt-2.0)*100), val_batt_sonde, (uint8_t)nb_err_reseau, "24H_Res");
                     nb_err_reseau=0;
-                    Vbatt_Th = 2.0; // permet de savoir, au prochain event, qu'il n'y a pas eu de maj
+                    Vbatt_Th_I = 0; // permet de savoir, au prochain event, qu'il n'y a pas eu de maj
                   }
 
                   // erreurs Tint, Text, heure
@@ -1035,7 +1043,8 @@ void init_rtc_variables()
 
 void init_ram_variables()
 {
-  cpt24h_batt=6;
+  cpt24h_batt=6;   // pour esp_chaudiere (chaque jour)
+  cpt_cycle_batt = 88; // pour sonde (chaque 15 min)
   err_Tint=0;
   err_Text=0;
   err_Heure=0;
@@ -1056,7 +1065,8 @@ void setup()
   
   // Cause réveil du deep/light_sleep (undefined si pas de reveil deep/light sleep)
   esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
-  if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0) {
+  if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0
+    || wakeup_reason == ESP_SLEEP_WAKEUP_GPIO) {
     force_stay_awake = true; // Réveil par bouton : on reste éveillé pour l'UART
     wake_up_time = millis();
     Serial.println("\n*** RÉVEIL PAR BOUTON : Mode configuration UART actif pour 30s ***");
@@ -1117,13 +1127,13 @@ void setup()
       .trigger_panic = true                             // Enable panic to restart ESP32
     };
     esp_err_t ESP32_WDT_ERROR = esp_task_wdt_init(&wdt_config);
-    Serial.println("WAtchdog : " + String(esp_err_to_name(ESP32_WDT_ERROR)));
+    //Serial.println("WAtchdog : " + String(esp_err_to_name(ESP32_WDT_ERROR)));
     //enableLoopWDT();  // active le reset-watchdog pour loop - inutile
     esp_err_t status = esp_task_wdt_add(NULL);  //add current thread to WDT watch
-    Serial.printf("enreg wdt loop : %i\n\r", status);
+    //Serial.printf("enreg wdt loop : %i\n\r", status);
     delay(1000);
     esp_task_wdt_reset();  // setup
-    Serial.println("reset watchdog debut setup");
+    //Serial.println("reset watchdog debut setup");
     delay(10);
   #endif
 
@@ -1255,8 +1265,8 @@ void setup()
     preferences_nvs.putUChar("LogD", log_detail);
     Serial.printf("New : Détail_log : %i \n\r", log_detail);
   }
-  else
-    Serial.printf("Détail log : %i \n\r", log_detail);
+  //else
+  //  Serial.printf("Détail log : %i \n\r", log_detail);
 
   uint8_t err_ip=0;
   // routeur : SSID & mot de passe
@@ -1395,7 +1405,7 @@ void setup()
       delay(500);
 
       readLastLogsBinary((uint8_t*)buffer_dmp, 10);  
-      delay(500);
+      delay(200);
     #endif
 
 
@@ -1463,7 +1473,6 @@ void setup()
     delay(1000); // Attente 4 sec pour que les boutons se stabilisent
 
     xTimerStart(xTimer_Init,100);
-    xTimerStart(xTimer_3min,100);
     xTimerStart(xTimer_24H,100);
     xTimerStart(xTimer_Cycle,100);
     //xTimerStart(xTimer_Compresseur,100);
@@ -1499,6 +1508,7 @@ void setup()
 
     if ((mode_reseau==11) || (mode_reseau==12)) // mode Access Point
     {
+      WiFi.mode(WIFI_AP_STA);
       Serial.printf("lancement mode access point:%i\n\r", mode_reseau);
       WiFi.softAP(ssid_AP, password_AP);
       WiFi.softAPConfig(local_ip_AP, gateway_AP, subnet_AP);
@@ -1507,6 +1517,8 @@ void setup()
     }
     else  // mode=13 : Station
     {
+      xTimerStart(xTimer_3min,100);
+
       //WiFi.mode(WIFI_STA);
       #ifdef DEBUG
         local_ip = Slocal_ip;
@@ -1544,6 +1556,7 @@ void setup()
     }
 
   #else  // WT32 Ethernet
+    xTimerStart(xTimer_3min,100);
     Serial.print("\nStarting AdvancedWebServer on " + String(ARDUINO_BOARD));
     //Serial.println(" with " + String(SHIELD_TYPE));
 
@@ -1572,6 +1585,7 @@ void setup()
 
     setupRoutes();
     server.begin();
+
 
   #endif // No_reseau
 
@@ -2279,7 +2293,7 @@ uint8_t requete_Get_String (uint8_t type, String var, char *valeur)
   return (res+res2-1);
 }
 
-// execution d'une action avec une valeur
+// execution d'une action avec une valeur - type 5
 uint8_t requete_Set_Action(const char *reg, const char *data)
 {
   uint8_t res = 1;
@@ -2840,6 +2854,19 @@ void requete_status(char *json_response, uint8_t socket, uint8_t type)
   p += sprintf(p, "\"cons_fixe\":%i,", cons_fixe);
   p += sprintf(p, "\"co_fi\":%i,", co_fi);
 
+  p += sprintf(p, "\"cy_act\":%i,", activ_cycle);
+  p += sprintf(p, "\"cy_cha\":%i,", cycle_chaud);
+  p += sprintf(p, "\"etat_chaud\":%i,", chaudiere);
+
+  uint8_t batSI = 0;
+  //Vbatt_Th = 3.12;
+  float batS = Vbatt_Th;
+  if (Vbatt_Th) // si V_bat sonde existe
+  {
+    if ((Vbatt_Th*1000) < Seuil_batt_sonde)   batSI=1;
+  }
+  p += sprintf(p, "\"batSI\":%i,", batSI);
+  p += sprintf(p, "\"batS\":%.2f,", batS);
 
   p += sprintf(p, "\"Kp\":%.2f,", Kp);
   p += sprintf(p, "\"Ki\":%.4f,", Ki);
@@ -3474,23 +3501,27 @@ void init_time_ps()
     unsigned long currentMillis = millis();
     if ((currentMillis - previousMillis_inittime >= (6*60 * 1000)) && (!init_time))
     {
-      Serial.println("Failed to obtain time : initialisation quand meme à 8h");
+      Serial.println("Failed to obtain time : initialisation quand meme à 20h");
       init_time = 1;
-      timeinfo.tm_hour = 8;
+      timeinfo.tm_hour = 20;
       timeinfo.tm_min = 0;
       timeinfo.tm_sec = 0;
+      timeinfo.tm_year = 126;
+      timeinfo.tm_mon = 1;      // Février (0=Jan, 1=Fév)
+      timeinfo.tm_mday = 1;     // 1er jour du mois
 
       const time_t sec = mktime(&timeinfo);  // make time_t
       timeval tv;
       tv.tv_sec = sec;
       tv.tv_usec = 0;
       settimeofday(&tv, NULL);
+      init_time=1;  // initialisé a 20h 1/2/2026
       // verification de l'heure toutes les 30 minutes
       xTimerChangePeriod(xTimer_Init,30*60*(1000/portTICK_PERIOD_MS),100); 
       xTimerStart(xTimer_Init,100);
     }
   }
-  else  // lecture correcte de l'heure
+  else  // lecture correcte de l'heure : Nota : si l'heure/date est mise à jour manuellement, alors "ok init time"
   {
     Serial.println("ok init time");
     Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
@@ -3554,7 +3585,7 @@ void loop()
 
 void passage_deep_sleep(uint64_t temps)
 {
-  uint64_t sleep_us = min(temps, 15ULL * 60ULL * 1000000ULL);
+  uint64_t sleep_us = min(temps, 30ULL * 60ULL * 1000000ULL);
 
   Serial.printf("PIN_REVEIL state = %d\n", digitalRead(PIN_REVEIL));
   Serial.flush();
@@ -3566,9 +3597,22 @@ void passage_deep_sleep(uint64_t temps)
   esp_sleep_enable_timer_wakeup(temps);
   #ifdef ESP32_v1
     esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_REVEIL, 0); // Réveil par bouton (0 = bas)
+
   #else  // Firebeetle
-  esp_sleep_enable_ext1_wakeup( 1ULL << PIN_REVEIL,  ESP_EXT1_WAKEUP_ALL_LOW);
+    // 2. Configurer le réveil par GPIO pour ESP32-C6
+    // Sur C6, on active le wake-up sur le niveau BAS (LOW)
+    gpio_config_t config = {
+      .pin_bit_mask = (1ULL << PIN_REVEIL),
+      .mode = GPIO_MODE_INPUT,
+      .pull_up_en = GPIO_PULLUP_ENABLE,   // ACTIVATION PULLUP CRITIQUE
+      .pull_down_en = GPIO_PULLDOWN_DISABLE,
+      .intr_type = GPIO_INTR_LOW_LEVEL
+    };
+    gpio_config(&config);
+
+    esp_deep_sleep_enable_gpio_wakeup( 1ULL << PIN_REVEIL, ESP_GPIO_WAKEUP_GPIO_LOW);
   #endif
+  
   esp_deep_sleep_start();
 }
 
@@ -4126,11 +4170,10 @@ uint8_t connectWiFiWithDiagnostic() {
   }
   
   Serial.printf("Connexion au réseau: %s\n", nom_routeur);
-  
-  // Configuration du mode WiFi
-  WiFi.mode(WIFI_STA);
-  
-  // Configuration IP statique si définie
+    // Configuration WiFi en mode Station pour ESP-NOW
+    WiFi.mode(WIFI_STA); 
+    
+    // 🔍 DIAGNOSTIC: Forcer le canal WiFique si définie
   if (local_ip[0] != 0) {
     Serial.printf("Configuration IP statique: %s\n", local_ip.toString().c_str());
     if (!WiFi.config(local_ip, gateway, subnet, primaryDNS, secondaryDNS)) {

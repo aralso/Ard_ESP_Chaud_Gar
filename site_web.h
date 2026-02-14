@@ -45,6 +45,11 @@ const char index_html[] PROGMEM = R"rawliteral(
   label.toggle-section-label { cursor: pointer; display: block }
   input.toggle-section-button {outline: 0;opacity: 0;width: 0;height: 0}
   input.toggle-section-button:checked+section.toggle-section {display: none}
+  canvas.graph-group {
+      width: 300px;  /* Fixe la largeur d'affichage */
+      height: 195px; /* Fixe la hauteur d'affichage */
+      display: block; /* Évite les comportements inline bizarres */
+  }
   .cancel-btn {    margin-left: 8px;
     width: 26px;
     height: 26px;
@@ -78,6 +83,7 @@ const char index_html[] PROGMEM = R"rawliteral(
   table.pgm input { width: 40px; background: #333; color: #fff; border: 1px solid #666; text-align: center; }
   table.pgm select { background: #333; color: #fff; border: 1px solid #666; font-size: 12px; }
 .inline-group { display: flex;  align-items: center; gap: 12px; }
+#batS-group { display: none; margin-left: 20px; }
 #co_fi-group { display: none; margin-left: 20px; }
 #vac-d-group { display: none; flex-direction: column; width: 100%; margin-top: 6px; }
 #vac-d-group .input-group { padding-left: 20px; }
@@ -132,9 +138,17 @@ const char index_html[] PROGMEM = R"rawliteral(
               <label for="LRTT"></label>
               <div class="text">
               <span class="alert-icon">⚠️</span>
-              Sonde deconnecté depuis
-                <input id="LRTT" type="text" minlength="1" maxlength="4" size="4"
-                      class="default-action"> heures
+              Sonde absente depuis
+                <span id="LRTT" class="default-action"></span> h
+              </div>
+            </div>
+
+            <div class="input-group" id="batS-group">
+              <label for="batS"></label>
+              <div class="text">
+              <span class="alert-icon">⚠️</span>
+              Batterie Sonde faible :
+                <span id="batS" class="default-action"></span> V
               </div>
             </div>
 
@@ -166,32 +180,33 @@ const char index_html[] PROGMEM = R"rawliteral(
 
             <div class="input-group" id="PL-group">
               <label for="planning">Programme</label>
-              <div class="switch">
+              <div class="switch" style="margin-left: 25px;">
                   <input id="planning" type="checkbox"  class="default-action">
                   <label class="slider" for="planning"></label>
               </div>
-              <div class="default-action">
+              <div class="default-action" style="margin-left: 10px;">
                 <div class="container">
-                  <div id="planning_led" class="default-action" ></div>
+                  <div id="planning_led" class="default-action" style="margin-left: 2px;"></div>
                 </div>
               </div>                  
             </div>
 
             <div class="input2-group " id="vac-group">
-              <label for="vacances">Vacances</label>
-              <div class="switch-container" style="display: flex; align-items: center; gap: 10px;">
-                <div class="switch">
-                    <input id="vacances" type="checkbox"  class="default-action">
-                    <label class="slider" for="vacances"></label>
-                </div>
-                <div id="vacances_led" class="default-action" ></div>
-              </div>                  
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <label for="vacances">Vacances</label>
+                  <div class="switch" style="margin-left:40px;">
+                      <input id="vacances" type="checkbox"  class="default-action">
+                      <label class="slider" for="vacances"></label>
+                  </div>
+                  <div id="vacances_led" class="default-action" style="margin-left: 2px;"></div>
+              </div>          
+
               <div id="vac-d-group">
                 <div class="input-group">
                   <label for="va_date">Date fin :</label>
                   <div class="text">
                     <div id="va_date_value" style="width: 30px; display: inline-block;"></div>
-                    <input id="va_date" type="range" min="0" max="90" value="0"
+                    <input id="va_date" type="range" min="0" max="30" value="0"
                           class="default-action">
                     &nbsp;jours
                   </div>
@@ -199,7 +214,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 
                 <div class="input-group">
                   <label for="va_heure">Heure fin :</label>
-                  <div class="text">
+                  <div class="number">
                     <input id="va_heure" type="text" size="6" class="default-action"> h
                   </div>
                 </div>
@@ -230,7 +245,7 @@ const char index_html[] PROGMEM = R"rawliteral(
             </div>
 
             <p>Graphique Temperature : </p>
-            <canvas id = "schema" height="130" width="203" style="border:1px solid" class="graph-group">
+            <canvas id = "schema" height="195" width="300" style="border:1px solid" class="graph-group">
               Votre navigateur ne supporte pas la balise canvas
             </canvas>
 
@@ -320,9 +335,29 @@ const char index_html[] PROGMEM = R"rawliteral(
               </div>                  
             </div>
 
+            <div class="input-group">
+              <label for="chaud">Fct chaudiere:</label>
+              <div class="container">
+                <div id="etat_chaud" class="default-action"></div>
+              </div>
+            </div>
+
+            <div class="input-group">
+                <label for="cy_act">Cycle_actif:</label>
+                <div class="text">
+                    <span id="cy_act" class="default-action"></span>
+                </div>
+            </div>
+
+            <div class="input-group">
+                <label for="cy_cha">cycle :</label>
+                <div class="text">
+                    <span id="cy_cha" class="default-action"></span>%
+                </div>
+            </div>
 
             <p>Graphique 24h : </p>
-            <canvas id = "schema2" height="130" width="203" style="border:1px solid" class="graph-group">
+            <canvas id = "schema2" height="195" width="300" style="border:1px solid" class="graph-group">
               Votre navigateur ne supporte pas la balise canvas
             </canvas>
 
@@ -369,8 +404,11 @@ const char index_html[] PROGMEM = R"rawliteral(
                   6 : log detail : 0:rien 4:max<br>
                   7 : délai écoute websocket<br>
                   8 : Skip graph : 1 valeur sur X<br>
-                  41 : canal wifi
-                  42 : canal wifi prérentiel (thermom)
+                  9 : Seuil batt sonde<br>
+                  10: Freq Log batterie(jours)<br>
+                  11 : consigne économie<br>
+                  41 : canal wifi<br>
+                  42 : canal wifi prérentiel (thermom)<brW
                   <br>
 
               <div class="input-group" id="set-regT-group">
@@ -491,7 +529,16 @@ const char index_html[] PROGMEM = R"rawliteral(
     document.addEventListener('DOMContentLoaded', function (event) {
        var baseHost = document.location.origin;
 
-
+      function VisibiliteGroup(groupId, visible) {
+          const el = document.getElementById(groupId);
+          if (!el) return;
+          el.style.display = (visible && visible != 0) ? "flex" : "none";
+      }
+      function updateBatSVisibility(batSI) {
+          const group = document.getElementById("batS-group");
+          if (!group) return;
+          group.style.display = batSI ? "flex" : "flex";
+      }
       function updateCoFiVisibility(cons_fixe) {
           const group = document.getElementById("co_fi-group");
           if (!group) return;
@@ -500,7 +547,8 @@ const char index_html[] PROGMEM = R"rawliteral(
       function updateTintVisibility(TintM) {
           const group = document.getElementById("Tint-mess-group");
           if (!group) return;
-          group.style.display = TintM ? "flex" : "none";
+          if (TintM > 5)  group.style.display = "flex";
+          else  group.style.display = "none";
       }
       function updateVacaVisibility(vacances) {
           const group = document.getElementById("vac-d-group");
@@ -521,6 +569,8 @@ const char index_html[] PROGMEM = R"rawliteral(
           fo_co: 10,
           consigne: 10,
           va_cons: 10,
+          cy_cha: 10,
+          LRTT:60,
           // ajouter ici tous les autres champs à diviser par 10
       };
 
@@ -534,13 +584,11 @@ const char index_html[] PROGMEM = R"rawliteral(
       });
 
       document.getElementById("cons_fixe").addEventListener("change", function () {
-          updateCoFiVisibility(this.checked ? 1 : 0);
+          VisibiliteGroup("co_fi-group", this.checked ? 1 : 0);
       });
+
       document.getElementById("vacances").addEventListener("change", function () {
-          updateVacaVisibility(this.checked ? 1 : 0);
-      });
-      document.getElementById("LRTT").addEventListener("change", function () {
-          updateTintVisibility(this.checked ? 1 : 0);
+          VisibiliteGroup("vac-d-group", this.checked ? 1 : 0);
       });
 
       document.getElementById("consigne").addEventListener("change", function () {
@@ -554,8 +602,6 @@ const char index_html[] PROGMEM = R"rawliteral(
           const duree = parseInt(heures, 10);
           if (isNaN(duree) || duree <= 0 || duree > 15) { alert("Durée invalide"); return; }
 
-          console.log("Nouvelle consigne :", valeurConsigne);
-          console.log("Forçage pendant :", duree, "heures");
           const dureeMinutes = duree * 60;
           sendValueToESP("fo_jus", dureeMinutes);
       });
@@ -607,23 +653,11 @@ const char index_html[] PROGMEM = R"rawliteral(
         }
         if (updateRemote && initialValue !== value) {
           updateConfig(el);
-        } else if(!updateRemote){
-          if(el.id === "aec"){
-            value ? hide(exposure) : show(exposure)
-          } else if(el.id === "agc"){
-            if (value) {
-              show(gainCeiling)
-              hide(agcGain)
-            } else {
-              hide(gainCeiling)
-              show(agcGain)
-            }
-          } else if(el.id === "awb_gain"){
+        }
+        else if(!updateRemote)
+        {
+          if(el.id === "awb_gain"){
             value ? show(wb) : hide(wb)
-          } else if(el.id === "face_recognize"){
-            value ? enable(enrollButton) : enable(enrollButton)
-          } else if(el.id == "led_intensity"){
-            value > -1 ? show(ledGroup) : hide(ledGroup)
           }
         }
       }
@@ -803,9 +837,18 @@ const char index_html[] PROGMEM = R"rawliteral(
             }
             if ((el.id === 'vacances') || (el.id === 'planning')
             || (el.id === 'co_fi') || (el.id === 'cons_fixe')
-            || (el.id === 'MMC')) {
+            || (el.id === 'MMC')  || (el.id === 'fo_jus'))
+            {
               setTimeout(() => { get_value(el.id); }, 1000);
             }
+            if (el.id === 'planning') {
+              setTimeout(() => { get_value('cons_fixe'); }, 1000);
+            }
+            if (el.id === 'cons_fixe') {
+              setTimeout(() => { get_value('planning'); }, 1000);
+            }
+            
+
           })
       }
 
@@ -848,10 +891,20 @@ const char index_html[] PROGMEM = R"rawliteral(
           })
 
         if (state.cons_fixe !== undefined) {
-            updateCoFiVisibility(Number(state.cons_fixe));
+            VisibiliteGroup("co_fi-group", Number(state.cons_fixe));
         }
+        if (state.LRTT !== undefined) {
+            VisibiliteGroup("Tint-mess-group", Number(state.LRTT) > 60);
+        }
+        if (state.vacances !== undefined) {
+            VisibiliteGroup(Number("vac-d-group", state.vacances));
+        }
+        if (state.batSI !== undefined) {
+            VisibiliteGroup("batS-group", Number(state.batSI));
+        }
+
         if (state.fo_jus !== undefined) {
-            updateJusqueGroup(parseInt(state.fo_jus));
+            VisibiliteGroup("jusque-group", parseInt(state.fo_jus));
         }
 
         for (var j =0; j<6; j++)
@@ -984,10 +1037,10 @@ const char index_html[] PROGMEM = R"rawliteral(
         if (num==1)  graphe.strokeStyle = "#0098f8"; //ext-bleu
         if (num==2)  graphe.strokeStyle = "#f84200"; //chaud-rouge
         graphe.beginPath();
-        graphe.moveTo(zone_dessin.width,(vert_max-f(num,0))*130/(vert_max-vert_min));
+        graphe.moveTo(zone_dessin.width,(vert_max-f(num,0))*zone_dessin.height/(vert_max-vert_min));
         compteur=1;
         while(compteur<NB_Val_Graph) {
-          graphe.lineTo(zone_dessin.width-(compteur*zone_dessin.width/NB_Val_Graph),(vert_max-f(num,compteur))*130/(vert_max-vert_min));
+          graphe.lineTo(zone_dessin.width-(compteur*zone_dessin.width/NB_Val_Graph),(vert_max-f(num,compteur))*zone_dessin.height/(vert_max-vert_min));
           compteur=(compteur+1);
         }           
         graphe.stroke();
@@ -1050,10 +1103,10 @@ const char index_html[] PROGMEM = R"rawliteral(
         if (num==1)  graphe.strokeStyle = "#0098f8"; //graph 4 : Text24h bleu
         if (num==2)  graphe.strokeStyle = "#f84200"; //graph 5 : Cout chaud-rouge
         graphe.beginPath();
-        graphe.moveTo(zone_dessin.width,(vert_max-f(num,0))*130/(vert_max-vert_min));
+        graphe.moveTo(zone_dessin.width,(vert_max-f(num,0))*zone_dessin.height/(vert_max-vert_min));
         compteur=1;
         while(compteur<NB_Val_Graph) {
-          graphe.lineTo(zone_dessin.width-(compteur*zone_dessin.width/NB_Val_Graph),(vert_max-f(num,compteur))*130/(vert_max-vert_min));
+          graphe.lineTo(zone_dessin.width-(compteur*zone_dessin.width/NB_Val_Graph),(vert_max-f(num,compteur))*zone_dessin.height/(vert_max-vert_min));
           compteur=(compteur+1);
         }           
         graphe.stroke();

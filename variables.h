@@ -69,11 +69,13 @@ typedef struct {
 #ifdef ESP32_v1
   #define PIN_REVEIL 12  // Pin de réveil (Bouton externe)
 #else  // Firebeetle
-  #define PIN_REVEIL 5  // Pin de réveil (Bouton externe) PIN RTC : 0 à 7
+  #define PIN_REVEIL 4  // Pin de réveil (Bouton externe) PIN RTC : 0 à 7
 #endif
 
 float readBatteryVoltage();
 extern float Vbatt_Th; // Tension batterie thermomètre
+extern bool Vbatt_Th_I; // indicateur de réception batt sonde
+
   const int PIN_Chaudiere = 19;
   const int PIN_Text = 36;      //  Text:Entrée analogique 32 à 36 et 39
   #ifdef ESP32_v1
@@ -181,6 +183,9 @@ extern RTC_DATA_ATTR uint16_t cpt_cycle_batt; // Compteur cycles pour mesure bat
 extern volatile uint8_t ackReceived;  // global pour indiquer que le peer a acké
 extern volatile int ackChannel;       // canal où ça a marché
 
+extern uint8_t activ_cycle;
+extern int16_t cycle_chaud;
+
 extern planning_t plan[];
 extern uint16_t fo_jus;     // nb minutes restantes de forcage consigne
 extern uint8_t fo_co;      // consigne de forcage : en dixième de degrés : 0,0° à 25,5°
@@ -202,8 +207,12 @@ extern uint8_t cpt24_Tint, cpt24_Text;
 
 extern char mdp_routeur[];
 extern int16_t graphique[NB_Val_Graph][NB_Graphique];
+extern  uint16_t Seuil_batt_sonde;  // millivolt
+extern uint8_t Cons_eco;
 
 extern Preferences preferences_nvs;  // Déclaration externe
+extern RTC_DATA_ATTR uint8_t etat_now;
+extern uint8_t Nb_jours_Batt_log;
 
 extern uint16_t heure_arret, dernier_fct;
 extern uint8_t etat_compr; 
