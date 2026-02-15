@@ -519,7 +519,7 @@ void vTimerInitCallback(TimerHandle_t xTimer)
 // timeout pour fin de securite modif
 void vTimerSecuriteCallback(TimerHandle_t xTimer)
 {
-  cpt_securite=0;
+  cpt_securite = 0;
 }
 
 // timeout chaque 3 minute : (test wifi)
@@ -2847,10 +2847,15 @@ void requete_status(char *json_response, uint8_t socket, uint8_t type)
 
   p += sprintf(p, "\"fo_jus\":%i,", fo_jus);
   p += sprintf(p, "\"planning\":%i,", planning);
+
   p += sprintf(p, "\"vacances\":%i,", vacances);
   p += sprintf(p, "\"va_cons\":%i,", va_cons);
-  p += sprintf(p, "\"va_date\":%i,", va_date-date_ac);
+  uint8_t va_date8 = 1;
+  if (vacances) va_date8 = va_date-date_ac;
+  if (va_date8 > 30)  va_date8 = 30;
+  p += sprintf(p, "\"va_date\":%i,", va_date8);
   p += sprintf(p, "\"va_heure\":%i,", va_heure);
+
   p += sprintf(p, "\"cons_fixe\":%i,", cons_fixe);
   p += sprintf(p, "\"co_fi\":%i,", co_fi);
 

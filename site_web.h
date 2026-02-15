@@ -534,35 +534,6 @@ const char index_html[] PROGMEM = R"rawliteral(
           if (!el) return;
           el.style.display = (visible && visible != 0) ? "flex" : "none";
       }
-      function updateBatSVisibility(batSI) {
-          const group = document.getElementById("batS-group");
-          if (!group) return;
-          group.style.display = batSI ? "flex" : "flex";
-      }
-      function updateCoFiVisibility(cons_fixe) {
-          const group = document.getElementById("co_fi-group");
-          if (!group) return;
-          group.style.display = cons_fixe ? "flex" : "none";
-      }
-      function updateTintVisibility(TintM) {
-          const group = document.getElementById("Tint-mess-group");
-          if (!group) return;
-          if (TintM > 5)  group.style.display = "flex";
-          else  group.style.display = "none";
-      }
-      function updateVacaVisibility(vacances) {
-          const group = document.getElementById("vac-d-group");
-          if (!group) return;
-          group.style.display = vacances ? "flex" : "none";
-      }
-      function updateJusqueGroup(fo_jus)
-      {
-        const group = document.getElementById("jusque-group");
-        if (fo_jus != 0)
-            group.style.display = "flex";
-        else
-            group.style.display = "none";
-      }
 
       const scale = {
           co_fi: 10,
@@ -579,7 +550,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       });
 
       document.getElementById("fo_cancel").addEventListener("click", () => {
-          updateJusqueGroup(0);
+          VisibiliteGroup("jusque-group", 0);
           sendValueToESP("fo_jus", 0);
       });
 
@@ -651,6 +622,16 @@ const char index_html[] PROGMEM = R"rawliteral(
             }
           }
         }
+        if (el.id === "fo_jus") {
+            VisibiliteGroup("jusque-group", parseInt(value));
+        }
+        if (el.id === "cons_fixe") {
+             VisibiliteGroup("co_fi-group", value ? 1 : 0);
+        }
+        if (el.id === "vacances") {
+             VisibiliteGroup("vac-d-group", value ? 1 : 0);
+        }
+
         if (updateRemote && initialValue !== value) {
           updateConfig(el);
         }
@@ -897,7 +878,7 @@ const char index_html[] PROGMEM = R"rawliteral(
             VisibiliteGroup("Tint-mess-group", Number(state.LRTT) > 60);
         }
         if (state.vacances !== undefined) {
-            VisibiliteGroup(Number("vac-d-group", state.vacances));
+            VisibiliteGroup("vac-d-group", Number(state.vacances));
         }
         if (state.batSI !== undefined) {
             VisibiliteGroup("batS-group", Number(state.batSI));
