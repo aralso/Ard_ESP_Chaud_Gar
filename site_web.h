@@ -5,7 +5,6 @@ const char index_html[] PROGMEM = R"rawliteral(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<!--<meta http-equiv='refresh' content='30'/>-->
 <title>Chaudiere</title>
 <style>
   body {font-family: Arial,Helvetica,sans-serif;background: #181818;color: #EFEFEF;font-size: 16px}
@@ -312,8 +311,6 @@ const char index_html[] PROGMEM = R"rawliteral(
             </table>
           </section>          
 
-
-          <!--<div style="margin-top: 8px;"><center><span style="font-weight: bold;">Advanced Settings</span></center></div>-->
           <hr style="width:150px">
           <label for="nav-toggle-det" class="toggle-section-label">&#9776;&nbsp;&nbsp;Détail valeurs</label><input type="checkbox" id="nav-toggle-det" class="hidden toggle-section-button" checked="checked">
           <section class="toggle-section">
@@ -361,15 +358,11 @@ const char index_html[] PROGMEM = R"rawliteral(
               Votre navigateur ne supporte pas la balise canvas
             </canvas>
 
-
           </section>          
 
-
-          <!--<div style="margin-top: 8px;"><center><span style="font-weight: bold;">Advanced Settings</span></center></div>-->
           <hr style="width:150px">
           <label for="nav-toggle-reg" class="toggle-section-label">&#9776;&nbsp;&nbsp;Register Get/ Set</label><input type="checkbox" id="nav-toggle-reg" class="hidden toggle-section-button" checked="checked">
           <section class="toggle-section">
-              <!--h4>Set Register</h4-->
               <div class="input-group" id="set-reg-group">
                   <label for="set-reg" style="width:120px">Reg, Value :</label>
                   <div class="text">
@@ -380,8 +373,6 @@ const char index_html[] PROGMEM = R"rawliteral(
                   </div>
                   <button class="inline-button" id="set-reg">Set</button>
               </div>
-              <!--<hr style="width:50px">-->
-              <!--h4>Get Register</h4-->
               <div class="input-group" id="get-reg-group">
                   <label for="get-reg" style="width:120px">Reg :</label>
                   <div class="text">
@@ -421,8 +412,6 @@ const char index_html[] PROGMEM = R"rawliteral(
                   </div>
                   <button class="inline-button" id="set-regT">Set texte</button>
               </div>
-              <!--<hr style="width:50px">-->
-              <!--h4>Get Register</h4-->
               <div class="input-group" id="get-regT-group">
                   <label for="get-regT" style="width:120px">Reg :</label>
                   <div class="text">
@@ -542,7 +531,6 @@ const char index_html[] PROGMEM = R"rawliteral(
           va_cons: 10,
           cy_cha: 10,
           LRTT:60,
-          // ajouter ici tous les autres champs à diviser par 10
       };
 
       document.getElementById("va_date").addEventListener("input", function () {
@@ -568,7 +556,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 
           const heures = prompt("Durée du forçage consigne (en heures) :",  "2" );
 
-          if (heures === null) { return;  } // utilisateur a annulé
+          if (heures === null) { return;  }
 
           const duree = parseInt(heures, 10);
           if (isNaN(duree) || duree <= 0 || duree > 15) { alert("Durée invalide"); return; }
@@ -668,20 +656,16 @@ const char index_html[] PROGMEM = R"rawliteral(
       setRegButton.onclick = () => {
         let reg = parseInt(document.getElementById('reg-addr').value);
         let value = parseFloat(document.getElementById('reg-value').value);
-        let getValueField = document.getElementById('get-reg-value'); // Champ à mettre à jour
+        let getValueField = document.getElementById('get-reg-value');
 
         const query = `${baseHost}/Set?type=2&reg=${reg}&val=${value}`
 
         fetch(query)
          .then(response => {
-           console.log(`request to ${query} finished, status: ${response.status}`)
-           return response.json(); // ✅ Extraction de la réponse JSON
+           return response.json();
         })
         .then(state => {
-            console.log(`Réponse reçue :`, state);
-            // Vérifier que la réponse contient bien les clés attendues
             if (state.reg !== undefined && state.val !== undefined) {
-                console.log(`Mise à jour de get-reg-value avec : ${state.val}`);
                 updateValue(getValueField, state.val, false);
             }
         })
@@ -692,14 +676,12 @@ const char index_html[] PROGMEM = R"rawliteral(
         let reg = parseInt(document.getElementById('get-reg-addr').value);
         let value = document.getElementById('get-reg-value');
 
-        // Vérifier si reg est un nombre valide
         if (isNaN(reg)) {
             console.error("Adresse du registre invalide !");
             value.innerHTML = "Erreur : adresse invalide";
             return;
         }
         const query = `${baseHost}/Get?type=2&reg=${reg}`
-        console.log("Requête envoyée :", query);
 
         fetch(query)
           .then(response => {
@@ -709,13 +691,9 @@ const char index_html[] PROGMEM = R"rawliteral(
             return response.json()
           })
           .then( state => {
-              console.log("Réponse reçue :", state);
-              // Vérifier que la réponse contient bien les clés attendues
               if (state.reg !== undefined && state.val !== undefined) {
-                  console.log(`Registre : ${state.reg}, Valeur : ${state.val}`);
                   value.innerHTML = state.val;
               } else {
-                  console.warn("Données incorrectes ou incomplètes !");
                   value.innerHTML = "Erreur : réponse invalide";
               }
 
@@ -729,8 +707,8 @@ const char index_html[] PROGMEM = R"rawliteral(
       const setRegTButton = document.getElementById('set-regT')
       setRegTButton.onclick = () => {
         let reg = parseInt(document.getElementById('regT-addr').value);
-        let value = document.getElementById('regT-value').value.trim(); // Garde l'IP comme string
-        let getValueField = document.getElementById('get-regT-value'); // Champ à mettre à jour
+        let value = document.getElementById('regT-value').value.trim(); 
+        let getValueField = document.getElementById('get-regT-value');
 
         const query = `${baseHost}/Set?type=4&reg=${reg}&val=${encodeURIComponent(value)}`;
 
@@ -742,16 +720,8 @@ const char index_html[] PROGMEM = R"rawliteral(
               return response.json();
           })
           .then(state => {
-              console.log(`Réponse reçue :`, state);
-
-              // Vérifier que la réponse contient bien les clés attendues
               if (state.reg !== undefined && state.val !== undefined) {
-                  console.log(`Mise à jour de get-regT-value avec : ${state.val}`);
-                  
-                  // Met à jour la valeur en utilisant la fonction `updateValue`
                   updateValue(getValueField, state.val, false);
-              } else {
-                  console.warn("Réponse invalide, impossible de mettre à jour get-regT-value.");
               }
           })
           .catch(error => {
@@ -772,7 +742,6 @@ const char index_html[] PROGMEM = R"rawliteral(
           })
           .then(function (state) {
             if (state.reg !== undefined && state.val !== undefined) {
-                  console.log(`Registre : ${state.reg}, Valeur : ${state.val}`);
                   value.innerHTML = state.val;
             }
           })
@@ -783,13 +752,12 @@ const char index_html[] PROGMEM = R"rawliteral(
 
           fetch(query)
             .then(response => {
-                console.log(`request to ${query} finished, status: ${response.status}`);
                 setTimeout(() => { get_value(id); }, 1000);
             });
       }
 
 
-      function updateConfig (el) {   // modif sur page web : requete / set pour mettre a jour dans le soft
+      function updateConfig (el) {   // modif sur page web : requete / set pour mettre a jour l'esp
         let value
         switch (el.type) {
           case 'checkbox':
@@ -812,7 +780,6 @@ const char index_html[] PROGMEM = R"rawliteral(
 
         fetch(query)
           .then(response => {
-            console.log(`request to ${query} finished, status: ${response.status}`)
             if ((el.id === 'code_secu') || (el.id === 'coche_secu')) {
               setTimeout(() => { get_value('codeR_secu'); }, 1000);
             }
@@ -833,7 +800,7 @@ const char index_html[] PROGMEM = R"rawliteral(
           })
       }
 
-      // read initial values
+      // read initial values : requete_status
       const element = document.getElementById('nb_capteurs');
       Nombre_capteurs = element.value ;
 
@@ -841,11 +808,10 @@ const char index_html[] PROGMEM = R"rawliteral(
 
 
       function fetchStatusData() {
-        fetch(`${baseHost}/status?type=${maj}`)   // requete status pour lecture des valeurs initiales
+        fetch(`${baseHost}/status?type=${maj}`)
           .then(response => response.json())
           .then(state => updatePageValues(state))
 
-          // Attach default on change action
           document
             .querySelectorAll('.default-action, .temperature span')
             .forEach(el => {
@@ -854,9 +820,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       }
       window.fetchStatusData = fetchStatusData;
 
-      setTimeout(() => {
-          fetchStatusData();  // attend 1 sec pour requete status
-      }, 1000);
+      setTimeout(() => { fetchStatusData(); } , 1000);
 
       function updatePageValues(state) {
         document
@@ -898,7 +862,7 @@ const char index_html[] PROGMEM = R"rawliteral(
             }
           }
         }
-        for (var i =0; i<NB_erreurs; i++)   // lecture erreurs
+        for (var i =0; i<NB_erreurs; i++)
         {
           let name = "E"+i;
           if (state[name] !== undefined) {
@@ -909,7 +873,6 @@ const char index_html[] PROGMEM = R"rawliteral(
             erreur_jour[i] = parseInt(val2[3]); 
             erreur_heure[i] = parseInt(val2[4]); 
             erreur_minute[i] = parseInt(val2[5]); 
-            //console.log("val2:"+state[name]+"-"+val2+"-"+val2[0]+"-"+val2[1]+"-"+erreur_code[i]);
           }
         }
         
@@ -920,7 +883,7 @@ const char index_html[] PROGMEM = R"rawliteral(
             for(let f=0; f<5; f++) {
                 let el = document.getElementById("P"+i+"_"+f);
                 if (el) {
-                  // Pour les consignes (index 3 et 4), on divise par 10 pour l'affichage
+                  // Pour les consignes (index 3 et 4) : div par 10
                   if (f === 3 || f === 4) {
                     el.value = (parseFloat(vals[f]) / 10).toFixed(1);
                   } 
@@ -939,19 +902,18 @@ const char index_html[] PROGMEM = R"rawliteral(
         function updatePlanning(pIdx, fieldIdx, value) {
           const reg = `P${pIdx}_${fieldIdx}`;
           let valToSend = value;
-          // Pour les consignes (index 3 et 4), on multiplie par 10 avant d'envoyer
+          // consignes (ind 3 et 4), on mult par 10
           if (fieldIdx === 3 || fieldIdx === 4) {
             valToSend = Math.round(parseFloat(value.toString().replace(',', '.')) * 10);
           }
-          // Pour les horaires (index 0 et 1), on convertit le format HHhMM en pas de 10 min
+          // horaires (ind 0 et 1), on convertit le format HHhMM en pas de 10 min
           else if (fieldIdx === 0 || fieldIdx === 1) {
             valToSend = timeToSteps(value);
           }
           const query = `${document.location.origin}/Set?type=1&reg=${reg}&val=${valToSend}`;
           fetch(query)
             .then(response => {
-              console.log(`Update ${reg} finished, status: ${response.status}`);
-              // Relire la valeur exacte depuis l'ESP32 pour confirmer
+              // Relire la valeur exacte depuis l'ESP
               setTimeout(() => {
                 const getQuery = `${document.location.origin}/Get?type=1&reg=${reg}`;
                 fetch(getQuery)
@@ -982,149 +944,87 @@ const char index_html[] PROGMEM = R"rawliteral(
 
         if (!maj)
         {
-          dessine_graphe_temp();
-          dessine_graphe_24h();
-          }
-        maj=1; // pour les maj suivantes => pas de graphique
+          dessine_graphe("schema", 0, 10, ["#00f808", "#0098f8", "#f84200"]);
+          dessine_graphe("schema2", 3, 10, ["#00f808", "#0098f8", "#f84200"]);
+        }
+        maj=1; // => pas de graphique
       }
     })
 
-    // Graphiques des Temperatures  0, 1 et 2
-    function dessine_graphe_temp()
+    function dessine_graphe(canvasId, dataOffset, divider, colors)
     {
-      var zone_dessin = document.getElementById("schema");
+      var zone_dessin = document.getElementById(canvasId);
       var graphe= zone_dessin.getContext("2d");
       var compteur=0;
       var vert_min = 35;
       var vert_max = -10;
-      for (j=0; j<3; j++)
-      {
-        for (i=0; i<NB_Val_Graph; i++)
-        {
-          if (f(j,i)<vert_min) vert_min=f(j,i);
-          if (f(j,i)>vert_max) vert_max=f(j,i);
+      
+      // Calcul min/max
+      for (j=0; j<3; j++) {
+        for (i=0; i<NB_Val_Graph; i++) {
+          let val = f(j, i);
+          if (val < vert_min) vert_min = val;
+          if (val > vert_max) vert_max = val;
         }
       }
-      if (vert_min<-10) vert_min=-10;
-      if (vert_max>35) vert_max=35;
+      
+      if (vert_min < -10) vert_min = -10;
+      if (vert_max > 35) vert_max = 35;
       vert_min = Math.floor(vert_min);
       vert_max = Math.ceil(vert_max);
           
-      graphe.lineWidth=2;
+      graphe.lineWidth = 2;
 
-      for (num=0; num<3; num++)
-      {
-        if (num==0)  graphe.strokeStyle = "#00f808"; //int-vert
-        if (num==1)  graphe.strokeStyle = "#0098f8"; //ext-bleu
-        if (num==2)  graphe.strokeStyle = "#f84200"; //chaud-rouge
+      for (num=0; num<3; num++) {
+        graphe.strokeStyle = colors[num];
         graphe.beginPath();
-        graphe.moveTo(zone_dessin.width,(vert_max-f(num,0))*zone_dessin.height/(vert_max-vert_min));
-        compteur=1;
-        while(compteur<NB_Val_Graph) {
-          graphe.lineTo(zone_dessin.width-(compteur*zone_dessin.width/NB_Val_Graph),(vert_max-f(num,compteur))*zone_dessin.height/(vert_max-vert_min));
-          compteur=(compteur+1);
+        graphe.moveTo(zone_dessin.width, (vert_max - f(num, 0)) * zone_dessin.height / (vert_max - vert_min));
+        
+        compteur = 1;
+        while(compteur < NB_Val_Graph) {
+          graphe.lineTo(zone_dessin.width - (compteur * zone_dessin.width / NB_Val_Graph), 
+                       (vert_max - f(num, compteur)) * zone_dessin.height / (vert_max - vert_min));
+          compteur = (compteur + 1);
         }           
         graphe.stroke();
       }
-      function f(num,x) {
-        var y=(graphique[num][x])/10;
+
+      function f(num, x) {
+        var y = (graphique[num + dataOffset][x]) / divider;
         return (y);
       }
-      graphe.beginPath();
-      graphe.lineWidth="1";
-      graphe.strokeStyle="white";
-      graphe.moveTo(0,zone_dessin.height/2);
-      graphe.lineTo(zone_dessin.width,zone_dessin.height/2);  //axe horiz
-      graphe.moveTo(0,zone_dessin.height);   // axe vertical
-      graphe.lineTo(0,0);
-      graphe.moveTo(0,0);
-      graphe.lineTo(5,5);
 
-      //tirets sur axe horizontal
-      var compteur=0;
-      var x=0;
-      while(compteur<12) {
-        graphe.moveTo(x,zone_dessin.height/2-5);
-        graphe.lineTo(x,zone_dessin.height/2+5);
-        compteur=(compteur+1);
-        x = x + zone_dessin.width/12;
+      // Axes
+      graphe.beginPath();
+      graphe.lineWidth = "1";
+      graphe.strokeStyle = "white";
+      graphe.moveTo(0, zone_dessin.height / 2);
+      graphe.lineTo(zone_dessin.width, zone_dessin.height / 2);  // horiz
+      graphe.moveTo(0, zone_dessin.height);   // vertical
+      graphe.lineTo(0, 0);
+      graphe.moveTo(0, 0);
+      graphe.lineTo(5, 5);
+
+      // Tirets
+      compteur = 0;
+      var x = 0;
+      while(compteur < 12) {
+        graphe.moveTo(x, zone_dessin.height / 2 - 5);
+        graphe.lineTo(x, zone_dessin.height / 2 + 5);
+        compteur = (compteur + 1);
+        x = x + zone_dessin.width / 12;
       } 
       graphe.stroke();
+      
       graphe.fillStyle = "white";
-      graphe.fillText(vert_min,5,-8+zone_dessin.height);
-      graphe.fillText(vert_max,5,8);
-    }
-
-    // Graphiques des Temp chaque 24 heures
-    function dessine_graphe_24h()
-    {
-      var zone_dessin = document.getElementById("schema2");
-      var graphe= zone_dessin.getContext("2d");
-      var compteur=0;
-      var vert_min = 35;  
-      var vert_max = -10;
-      for (j=0; j<3; j++)
-      {
-        for (i=0; i<NB_Val_Graph; i++)
-        {
-          if (f(j,i)<vert_min) vert_min=f(j,i);
-          if (f(j,i)>vert_max) vert_max=f(j,i);
-        }
-      }
-      if (vert_min<-10) vert_min=-10;
-      if (vert_max>35) vert_max=35;
-      vert_min = Math.floor(vert_min);
-      vert_max = Math.ceil(vert_max);
-          
-      graphe.lineWidth=2;
-
-      for (num=0; num<3; num++)
-      {
-        if (num==0)  graphe.strokeStyle = "#00f808"; //graph 3 : Tint24h vert
-        if (num==1)  graphe.strokeStyle = "#0098f8"; //graph 4 : Text24h bleu
-        if (num==2)  graphe.strokeStyle = "#f84200"; //graph 5 : Cout chaud-rouge
-        graphe.beginPath();
-        graphe.moveTo(zone_dessin.width,(vert_max-f(num,0))*zone_dessin.height/(vert_max-vert_min));
-        compteur=1;
-        while(compteur<NB_Val_Graph) {
-          graphe.lineTo(zone_dessin.width-(compteur*zone_dessin.width/NB_Val_Graph),(vert_max-f(num,compteur))*zone_dessin.height/(vert_max-vert_min));
-          compteur=(compteur+1);
-        }           
-        graphe.stroke();
-      }
-      function f(num,x) {
-        var y=(graphique[num+3][x]);
-        return (y);
-      }
-      graphe.beginPath();
-      graphe.lineWidth="1";
-      graphe.strokeStyle="white";
-      graphe.moveTo(0,zone_dessin.height/2);
-      graphe.lineTo(zone_dessin.width,zone_dessin.height/2);  //axe horiz
-      graphe.moveTo(0,zone_dessin.height);   // axe vertical
-      graphe.lineTo(0,0);
-      graphe.moveTo(0,0);
-      graphe.lineTo(5,5);
-
-      //tirets sur axe horizontal
-      var compteur=0;
-      var x=0;
-      while(compteur<12) {
-        graphe.moveTo(x,zone_dessin.height/2-5);
-        graphe.lineTo(x,zone_dessin.height/2+5);
-        compteur=(compteur+1);
-        x = x + zone_dessin.width/12;
-      } 
-      graphe.stroke();
-      graphe.fillStyle = "white";
-      graphe.fillText(vert_min,5,-8+zone_dessin.height);
-      graphe.fillText(vert_max,5,8);
+      graphe.fillText(vert_min, 5, -8 + zone_dessin.height);
+      graphe.fillText(vert_max, 5, 8);
     }
 
 
     // Action type 5:
 
-      document.getElementById('ActionBtn').addEventListener('click', () => {
+    document.getElementById('ActionBtn').addEventListener('click', () => {
       const reg   = document.getElementById('Action_reg').value.trim();
       const value = parseFloat(document.getElementById('Action_data').value);
       const baseHost = document.location.origin;
@@ -1143,8 +1043,6 @@ const char index_html[] PROGMEM = R"rawliteral(
           console.error('Erreur fetch :', err);
          });
     });
-
-    // log_flash :
 
     document.getElementById('loadLogsBtn').addEventListener('click', () => {
     const count = document.getElementById('countInput').value;
@@ -1167,10 +1065,6 @@ const char index_html[] PROGMEM = R"rawliteral(
 
   function displayLogsBinary(buffer) {
     const LOG_SIZE = 16;
-
-    if (buffer.length % LOG_SIZE !== 0) {
-      console.warn(`Donnée binaire invalide : ${buffer.length} octets`);
-    }
 
     const logCount = buffer.length / LOG_SIZE;
     let html = "";
@@ -1197,7 +1091,6 @@ const char index_html[] PROGMEM = R"rawliteral(
 
       let logLine = `Log ${i + 1}: ${dateStr} :${codeChar} ${padLeft(c1, 2)} ${padLeft(c2, 2)} ${padLeft(c3, 2)} "${message}"<br>`;
       html += logLine;
-      //html += `Log ${i + 1}: ${dateStr} :${codeChar}${c1} ${c2} ${c3} ${message}<br>`;
     }
 
     document.getElementById("log_histo").innerHTML = html;

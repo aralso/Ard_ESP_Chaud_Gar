@@ -5,6 +5,7 @@ TODO :
     Sonde Tint defaillante => Text => cycle variable
     ni reseau, ni Tint : cycle constant
 
+v1.7 02/2026 qq bugs, optimisation site_web
 v1.6 02/2026 Firebeetle, sonde(mode dégradés), Chaud(Batt_sonde_low, freq log batt)
 v1.5 02/2026 esp_sonde et eps_chaudiere ok
 v1.4 02/2026 esp_now
