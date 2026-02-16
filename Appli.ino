@@ -1654,7 +1654,11 @@ void event_mesure_temp()  // toutes les 15 minutes : modif allumage chaudiere
       graphique[0][0] = round(Tint * 10);
       graphique[0][1] = round(Text * 10);
 
-      graphique[0][2] = chaudiere*50+150;  // 150:arret 200:marche
+      if (activ_cycle)
+      {
+        graphique[0][2] = cycle_chaud/17 + 150;   //0=>150  500=>180
+      }
+      else   graphique[0][2] = chaudiere*50+150;  // 150:arret 200:marche
     }
   #endif
 }
@@ -1713,12 +1717,12 @@ void OnDataRecv(const esp_now_recv_info_t * info, const uint8_t *incomingData, i
       Tint = Trecue;
       if ((Trecue < 24.99) || (Trecue > 25.01))
       {
-        uint8_t mil = millis();
+        unsigned long mil = millis();
         if (mil - last_remote_Tint_time > 25*60*1000) // le precedent message est vieux de plus de 25 minutes
           err_Tint++;
-      last_remote_Tint_time = mil;
-      cpt24_Tint++;
-      tempI_moy24h += Tint;
+        last_remote_Tint_time = mil;
+        cpt24_Tint++;
+        tempI_moy24h += Tint;
       }
     }
     Serial.printf("✅ Tint mise à jour: %.2f°C\n", Tint);

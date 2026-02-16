@@ -1,7 +1,7 @@
-# Ard_ESP_Chaudeire_Garches :
+# Ard_ESP_Chaudiere_Garches :
 
 Modification adresse IP : Message type 2 ou 4 (à envoyer sur port série 115200 bauds)
-2-1:13         // mode Ethernet filaire
+2-1:13              // 13 : mode wifi station
 4-1:192.168.251.31  // adresse IP du module  (et .32 pour Sonde thermometre)
 4-2:192.168.251.1   // adresse IP de la gateway
 4-3:255.255.255.0   // subnet IP
@@ -10,10 +10,15 @@ Modification adresse IP : Message type 2 ou 4 (à envoyer sur port série 115200
 4-6:garches        // nom routeur pour wifi
 4-7: xxx            // mdp routeur pour wifi
 4-8:1               // websocket (1:off, 2:on)
-4-9:ws://webcam.hd.free.fr:8081       // websocket IP
+4-9:ws://webcam.hd.free.fr:8081       // websocket IP (pas utilisé ici)
 4-10:3              // Websocket ID
-4-11: B0:CB:D8:E9:0C:74 (sonde)
+4-11: B0:CB:D8:E9:0C:74 (Dans sonde : adresse mac de l'esp chaudiere)
 puis ARST0   // Reset
+
+Sonde : 
+   Appuyer sur le bouton => le module se connecte au wifi et reste allumé pendant 30 seconde
+   chaque message uart envoyé, prolonge de 30 secondes la durée d'allumage
+   chaque requete /get ou /set sur la page web prolonge de 30s la durée d'allumage
 
 Autres registres (type2) : 
                   1 : mode reseau (11-12:AP, 13:routeur, 14:filaire)

@@ -202,6 +202,13 @@ const char index_html[] PROGMEM = R"rawliteral(
 
               <div id="vac-d-group">
                 <div class="input-group">
+                  <label for="va_cons">Consigne vacances :</label>
+                  <div class="number">
+                    <input id="va_cons" type="text" minlength="1" maxlength="4" size="4" class="default-action"> °C
+                  </div>
+                </div>
+
+                <div class="input-group">
                   <label for="va_date">Date fin :</label>
                   <div class="text">
                     <div id="va_date_value" style="width: 30px; display: inline-block;"></div>
@@ -285,7 +292,7 @@ const char index_html[] PROGMEM = R"rawliteral(
             <table class="pgm">
               <thead>
                 <tr>
-                  <th>#</th><th>Dép.</th><th>Fin</th><th>Type</th><th>Cons.</th><th>Apr.</th>
+                  <th>#</th><th>Début</th><th>Fin</th><th>Type</th><th>Cons.</th><th>Apr.</th>
                 </tr>
               </thead>
               <tbody>
@@ -398,8 +405,8 @@ const char index_html[] PROGMEM = R"rawliteral(
                   9 : Seuil batt sonde<br>
                   10: Freq Log batterie(jours)<br>
                   11 : consigne économie<br>
-                  41 : canal wifi<br>
-                  42 : canal wifi prérentiel (thermom)<brW
+                  41 : canal wifi <br>
+                  42 : canal wifi prérentiel (sonde)<brW
                   <br>
 
               <div class="input-group" id="set-regT-group">

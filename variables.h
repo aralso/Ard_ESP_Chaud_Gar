@@ -58,7 +58,6 @@ typedef struct {
   const int PIN_Tint22 = 5;  // GPIO IN1 Temp interieure DHT22
   const int PIN_PAC = 4;     // GPIO OUT PAC PWM
   const int PIN_Text = 36;   //  Text:Entrée analogique 32 à 36 et 39
-  const int PIN_Chaudiere = 19;
 #else                      // ESP32_DevKit
   //const int PIN_Tint = 13;  Défini dans le fichier appli.ino
   const int PIN_Tint22 = 5;     // GPIO IN1 Temp interieure DHT22

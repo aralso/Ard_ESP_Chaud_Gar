@@ -1,11 +1,9 @@
 /* 
 
 TODO : 
-    au démarrage, si pas de réseau, pas d'heure : méthode de regul ?
-    Sonde Tint defaillante => Text => cycle variable
-    ni reseau, ni Tint : cycle constant
+    
 
-v1.7 02/2026 qq bugs, optimisation site_web
+v1.7 02/2026 qq bugs, optimisation taille site_web, consigne vacances
 v1.6 02/2026 Firebeetle, sonde(mode dégradés), Chaud(Batt_sonde_low, freq log batt)
 v1.5 02/2026 esp_sonde et eps_chaudiere ok
 v1.4 02/2026 esp_now
@@ -15,6 +13,7 @@ v1.1 12/2025 copie de PAC_Catalane v1.16
 
 Interrogation des données par la liaison série (recep_message) : 2-1 (type1, reg1)
 
+Conso sonde : 37uA en veille, 17mA pdt 7sec => 170uA. Avec 2000mAh => 1,3 Année
 
 Configuration des options de programmation : 
 - usb CDC on boot :  enable (pour permettre les serial.print)
@@ -76,7 +75,7 @@ Configuration des options de programmation :
 
 
 #define DELAI_PING  180  // en secondes, pour le websocket
-#define Version "V1.6"
+#define Version "V1.7"
 
 #define IP_CHAUDIERE "192.168.251.31" // Adresse IP de l'ESP Chaudière
 #define LATITUDE "48.8461"
@@ -223,7 +222,7 @@ unsigned long last_remote_Tint_time = 0, last_remote_Text_time=0, last_remote_he
 int16_t  graphique [NB_Val_Graph][NB_Graphique];
 
 // Status
-RTC_DATA_ATTR uint32_t rtc_magic = 0xDEADBEEF;
+RTC_DATA_ATTR uint32_t rtc_magic; //= 0xDEADBEEF;
 uint8_t rtc_valid;  // 0:non valide-cold reset  1:reset apres deep sleep : RTC valide
 uint16_t nb_err_reseau;
 RTC_DATA_ATTR uint16_t cpt_cycle_batt; // Compteur cycles pour mesure batterie
@@ -358,14 +357,14 @@ const int BTN_PIN[BTN_COUNT] = {14};  // Pins des boutons
 
 #define configASSERT_CODE( x, code ) if( ( x ) == 0 ) { \
     taskDISABLE_INTERRUPTS();                           \
-    writeLog(0xFF, code, 0, 0, "ASSERT FAILED");         \
+    writeLog('A', code, 0, 0, "ASSERT");         \
     Serial.print("ASSERT FAILED, code: ");              \
     Serial.println(code);                               \
     while(1) { }                                         \
 }
 // utiliser comme cela : configASSERT_CODE(ptr != NULL, 3);   // code 3 = pointeur NULL
 
-int resetReason0;
+uint8_t resetReason0;
 esp_sleep_wakeup_cause_t source_reveil;
 char resetREASON0[50];
 char duree_RESET[60];
@@ -437,7 +436,7 @@ const char* verbose_reset_reason(int reason) {
   static char resetREAS[50]; // static car permet de conserver la variable au retour de la fonction
     switch (reason) {
     case 0: return "reset inconnu";
-    case 1: return "alim/reset manuel";
+    case 1: return "power on";
     case 2: return "signal externe";
     case 3: return "soft:esp_restart";
     case 4: return "Exception";
@@ -1082,7 +1081,7 @@ void setup()
     // RTC non valide = cold reset
     rtc_valid = 0;
     init_rtc_variables(); // initialisation des variables RTC, la ram normale est mise à 0
-    rtc_magic = 0x5343211;
+    rtc_magic = 0x05343211;
   }
   else
   {
@@ -1402,7 +1401,7 @@ void setup()
       Serial.println("Partition 'log_flash' trouvée.");
 
       delay(500 + random(1, 1001) );
-      writeLog('S', 0, resetReason0, 0, "Init");
+      writeLog('R', resetReason0, rtc_valid, wakeup_reason, "Reset");
       delay(500);
 
       readLastLogsBinary((uint8_t*)buffer_dmp, 10);  
@@ -2636,14 +2635,6 @@ uint8_t requete_GetReg(int reg, float *valeur) {
   }
 
 
-  if (reg == 41)  // registre 41 : canal WiFi actuel
-  {
-    res = 0;
-    uint8_t current_channel;
-    wifi_second_chan_t second;
-    esp_wifi_get_channel(&current_channel, &second);
-    *valeur = (float)current_channel;
-  }
 
 
   res2 = requete_GetReg_appli(reg, valeur);
@@ -2809,7 +2800,7 @@ void requete_status(char *json_response, uint8_t socket, uint8_t type)
 
   unsigned long mill = millis();
 
-  int sec = mill / 1000;  // 65000
+  unsigned long sec = mill / 1000;  // 65000
   int min = (sec / 60) % 60;  //
   int hour = (sec / 3600) % 24;
   int day = (sec / 3600 / 24);
@@ -3591,7 +3582,7 @@ void loop()
 
 void passage_deep_sleep(uint64_t temps)
 {
-  uint64_t sleep_us = min(temps, 30ULL * 60ULL * 1000000ULL);
+  uint64_t sleep_us = min(temps, 60ULL * 60ULL * 1000000ULL);
 
   Serial.printf("PIN_REVEIL state = %d\n", digitalRead(PIN_REVEIL));
   Serial.flush();
@@ -3782,6 +3773,13 @@ server.on("/verif", HTTP_GET, [](AsyncWebServerRequest *request){
     String reg;
     uint8_t type=0;
 
+    #ifdef ESP_THERMOMETRE
+      // Si une commande /get arrive, on force le réveil si ce n'est pas déjà fait
+      force_stay_awake = true;
+      wake_up_time = millis();
+      Serial.println("Activité /get détectée : prolongation du délai de 30s.");
+    #endif
+
     if ((request->hasParam("type")) && (request->hasParam("reg")))
     {
       type = request->getParam("type")->value().toInt();
@@ -3836,6 +3834,13 @@ server.on("/verif", HTTP_GET, [](AsyncWebServerRequest *request){
     String reg;
     #define JSON_BUF_SIZE (MAX_DUMP + 50)  // marge de sécurité
     static char json_response[JSON_BUF_SIZE];
+
+    #ifdef ESP_THERMOMETRE
+      // Si une commande /set arrive, on force le réveil si ce n'est pas déjà fait
+      force_stay_awake = true;
+      wake_up_time = millis();
+      Serial.println("Activité /set détectée : prolongation du délai de 30s.");
+    #endif
 
     buffer_dmp[0]=0;
       char *p = json_response;
