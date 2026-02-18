@@ -62,7 +62,7 @@ typedef struct {
   //const int PIN_Tint = 13;  Défini dans le fichier appli.ino
   const int PIN_Tint22 = 5;     // GPIO IN1 Temp interieure DHT22
   const int PIN_PAC = 4;        //  OUT PAC - PWM  40kOhm+100nF(Fc=40Hz) et PWM=40khz
-#define PIN_Vbatt 35   // Pin Surveillance Batterie (LiPo/2)
+#define PIN_Vbatt 0   // Pin Surveillance Batterie (LiPo/2)
 
 // Pin Reveil
 #ifdef ESP32_v1
@@ -201,8 +201,8 @@ extern unsigned long last_remote_Tint_time, last_remote_Text_time, last_remote_h
 extern uint16_t err_Tint, err_Text, err_Heure;
 extern uint8_t chaudiere;
 
-extern float  tempI_moy24h, tempE_moy24h;
-extern uint8_t cpt24_Tint, cpt24_Text;
+extern float  tempI_moy24h, tempE_moy24h, cout_moy24h;
+extern uint8_t cpt24_Tint, cpt24_Text, cpt24_Cout;
 
 extern char mdp_routeur[];
 extern int16_t graphique[NB_Val_Graph][NB_Graphique];

@@ -5,6 +5,8 @@ const char index_html[] PROGMEM = R"rawliteral(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="apple-mobile-web-app-capable" content="no">
+<meta name="mobile-web-app-capable" content="no">
 <title>Chaudiere</title>
 <style>
   body {font-family: Arial,Helvetica,sans-serif;background: #181818;color: #EFEFEF;font-size: 16px}
@@ -190,6 +192,27 @@ const char index_html[] PROGMEM = R"rawliteral(
               </div>                  
             </div>
 
+            <div class="input-group inline-group" id="CS-group">
+              <label for="cons_fixe">Consigne fixe</label>
+              <div class="switch">
+                  <input id="cons_fixe" type="checkbox"  class="default-action">
+                  <label class="slider" for="cons_fixe"></label>
+              </div>
+              <div class="default-action">
+                <div class="container">
+                  <div id="cons_fixe_led" class="default-action" ></div>
+                </div>
+              </div>                  
+
+              <div class="input-group" id="co_fi-group">
+                <label for="co_fi"></label>
+                <div class="text">
+                  <input id="co_fi" type="text" minlength="1" maxlength="4" size="4"
+                        class="default-action"> °C
+                </div>
+              </div>
+            </div>
+
             <div class="input2-group " id="vac-group">
               <div style="display: flex; align-items: center; gap: 10px;">
                 <label for="vacances">Vacances</label>
@@ -228,39 +251,10 @@ const char index_html[] PROGMEM = R"rawliteral(
               </div>
             </div>
 
-
-            <div class="input-group inline-group" id="CS-group">
-              <label for="cons_fixe">Consigne fixe</label>
-              <div class="switch">
-                  <input id="cons_fixe" type="checkbox"  class="default-action">
-                  <label class="slider" for="cons_fixe"></label>
-              </div>
-              <div class="default-action">
-                <div class="container">
-                  <div id="cons_fixe_led" class="default-action" ></div>
-                </div>
-              </div>                  
-
-              <div class="input-group" id="co_fi-group">
-                <label for="co_fi"></label>
-                <div class="text">
-                  <input id="co_fi" type="text" minlength="1" maxlength="4" size="4"
-                        class="default-action"> °C
-                </div>
-              </div>
-            </div>
-
             <p>Graphique Temperature : </p>
             <canvas id = "schema" height="195" width="300" style="border:1px solid" class="graph-group">
               Votre navigateur ne supporte pas la balise canvas
             </canvas>
-
-            <div class="input-group">
-                <label for="periode_c">Periode cycle :</label>
-                <div class="text">
-                    <span id="periode_cycle" class="default-action"></span> min
-                </div>
-            </div>
 
             <div class="input-group" id="pac-group">
                 <label for="coche_secu">code      </label>
@@ -297,6 +291,27 @@ const char index_html[] PROGMEM = R"rawliteral(
               </thead>
               <tbody>
                 <script>
+                  let startY = 0;
+                  let currentY = 0;
+                  let threshold = 120; // distance minimum en pixels
+
+                  document.addEventListener("touchstart", function(e) {
+                      if (window.scrollY === 0) {
+                          startY = e.touches[0].pageY;
+                      }
+                  }, { passive: true });
+
+                  document.addEventListener("touchmove", function(e) {
+                      currentY = e.touches[0].pageY;
+                  }, { passive: true });
+
+                  document.addEventListener("touchend", function() {
+                      if (window.scrollY === 0 && currentY - startY > threshold) {
+                          location.reload(true); // recharge complet
+                      }
+                  });
+
+
                   for(let i=0; i<3; i++) {
                     document.write(`<tr>
                       <td>${i}</td>
@@ -360,6 +375,20 @@ const char index_html[] PROGMEM = R"rawliteral(
                 </div>
             </div>
 
+            <div class="input-group">
+              <label for="PPE">Prochaine maj cycle :</label>
+              <div class="text">
+                  <span id="PPE" class="default-action"></span> sec
+              </div>
+            </div>
+
+            <div class="input-group">
+                <label for="periode_c">Periode cycle :</label>
+                <div class="text">
+                    <span id="periode_cycle" class="default-action"></span> min
+                </div>
+            </div>
+
             <p>Graphique 24h : </p>
             <canvas id = "schema2" height="195" width="300" style="border:1px solid" class="graph-group">
               Votre navigateur ne supporte pas la balise canvas
@@ -405,6 +434,7 @@ const char index_html[] PROGMEM = R"rawliteral(
                   9 : Seuil batt sonde<br>
                   10: Freq Log batterie(jours)<br>
                   11 : consigne économie<br>
+                  12 : temps éveillé (sec) (sonde)<br>
                   41 : canal wifi <br>
                   42 : canal wifi prérentiel (sonde)<brW
                   <br>
@@ -448,7 +478,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 
 
             <div>
-            <h1>Log erreurs: 1(Tint) 2(Text) 3(Teau)..</h1>
+            <h1>Log erreurs: 1(Tint) 2(Text) 3(heure)..</h1>
             <p id='erreurs_histo'><br></p>
             <h1>Log :</h1>
             <p id='log_histo'><br></p>
@@ -547,6 +577,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       document.getElementById("fo_cancel").addEventListener("click", () => {
           VisibiliteGroup("jusque-group", 0);
           sendValueToESP("fo_jus", 0);
+          setTimeout(() => { get_value('consigne'); }, 1000);
       });
 
       document.getElementById("cons_fixe").addEventListener("change", function () {

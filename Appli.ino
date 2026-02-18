@@ -12,6 +12,8 @@ RTC_DATA_ATTR uint8_t etat_now;
 uint16_t Seuil_batt_sonde;  // millivolt
 uint8_t Nb_jours_Batt_log;
 uint8_t Cons_eco;
+uint16_t prolong_veille;
+uint8_t chaud_marche;
 
 // Loi d'eau
 int8_t Pt1;
@@ -203,6 +205,17 @@ void setup_nvs()
       else
         Serial.printf("Wifi channel preferentiel: %i\n", WIFI_CHANNEL);
       last_wifi_channel = WIFI_CHANNEL;
+
+      // Initialisation du temps de reveil pour la sonde, si reveil uart/web
+      prolong_veille = preferences_nvs.getUShort("PVei", 0);
+      if (!prolong_veille) {
+        prolong_veille = 30;
+      preferences_nvs.putUShort("PVei", prolong_veille);
+        Serial.printf("Raz temps reveil : %i sec\n", prolong_veille);
+      }
+      else
+        Serial.printf("Temps reveil : %i sec\n", prolong_veille);
+
 
     #endif
 
@@ -619,9 +632,21 @@ void setup_2()
     Serial.println("🔵 ESP-NOW Initialisé (RÉCEPTEUR)");
     Serial.print("   MAC Address: ");
     //if ((mode_reseau==13) )
-      Serial.println(WiFi.macAddress());
     //else
     //  Serial.println(WiFi.softAPmacAddress());
+
+    // Stockage de l'adresse MAC dans le tableau mac_chaudiere[6]
+    #ifdef ESP_THERMOMETRE
+        Serial.println(WiFi.macAddress());
+    #else
+      String macStr = WiFi.macAddress();
+      sscanf(macStr.c_str(), "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+            &mac_chaudiere[0], &mac_chaudiere[1], &mac_chaudiere[2],
+            &mac_chaudiere[3], &mac_chaudiere[4], &mac_chaudiere[5]);
+      Serial.printf("   MAC : %02X:%02X:%02X:%02X:%02X:%02X\n",
+            mac_chaudiere[0], mac_chaudiere[1], mac_chaudiere[2],
+            mac_chaudiere[3], mac_chaudiere[4], mac_chaudiere[5]);
+    #endif
 
     Serial.printf("   Canal WiFi: %d\n", current_channel);
     Serial.println("   En attente de messages...");
@@ -807,7 +832,16 @@ void maj_etat_chaudiere()
         if (plan[i].ch_debut != 0 || plan[i].ch_fin != 0) 
         {
             // Vérification si on est dans la tranche horaire
-            if (heure*6 >= plan[i].ch_debut && heure*6 < plan[i].ch_fin) 
+            uint8_t tr=0;
+            if (plan[i].ch_debut < plan[i].ch_fin)  // cas normal
+            {
+                if (heure*6 >= plan[i].ch_debut && heure*6 < plan[i].ch_fin) tr=1;
+            }
+            else
+            {
+                 if (heure*6 <= plan[i].ch_debut && heure*6 > plan[i].ch_fin) tr=1;
+            }
+            if (tr)
             {
               cons_chaud = plan[i].ch_consigne;
               planning_actif = 1;
@@ -955,14 +989,14 @@ uint8_t requete_Set_appli (String param, float valf)
        maj_etat_chaudiere_delai(15);
     }
 
-/*    if (param == "RTint") {  // Non utilisé
+    if (param == "RTint") {  // Non utilisé
       res = 0;
       Tint = valf;
       last_remote_Tint_time = millis();
       cpt24_Tint++;
       tempI_moy24h += Tint;
       Serial.printf("Réception RTint : %.2f°C\n", Tint);
-    }*/
+    }
 
 
     if (param == "HG") 
@@ -1036,6 +1070,8 @@ uint8_t requete_Set_appli (String param, float valf)
     {
       res = 0;
       Vbatt_Th = valf;
+      Vbatt_Th_I = 1;
+
       Serial.printf("Réception Vbatt Distante : %.2fV\n", Vbatt_Th);
     }
 
@@ -1230,6 +1266,11 @@ uint8_t requete_GetReg_appli(int reg, float *valeur)
     res = 0;
     *valeur = TPacMax;
   }
+  if (reg == 12)  // registre 12 : temps eveillé (sec) (sonde)
+  {
+    res = 0;
+    *valeur = prolong_veille;
+  }
 
 
   if (reg == 40)  // registre 40 : Mode
@@ -1397,6 +1438,14 @@ uint8_t requete_SetReg_appli(int param, float valeurf)
     }
   }
 
+  if (param == 12)  // registre 12 : prolong veille (sonde)
+  {
+    if (valeur >= 10) {
+      res = 0;
+      prolong_veille = valeur;
+      preferences_nvs.putUShort("PVei", prolong_veille);
+    }
+  }
 
   if (param == 40)  // registre 40 : mode
   {
@@ -1427,7 +1476,7 @@ uint8_t requete_SetReg_appli(int param, float valeurf)
   return res;
 }
 
-
+// type 4
 uint8_t requete_Get_String_appli(uint8_t type, String var, char *valeur)
 {
   uint8_t res=1;
@@ -1456,6 +1505,7 @@ uint8_t parseMacString(const char* str, uint8_t mac[6]) {
   return true;
 }
 
+// type 4
 uint8_t requete_Set_String_appli(int param, const char *texte)
 {
   uint8_t res=1;
@@ -1641,7 +1691,10 @@ void event_mesure_temp()  // toutes les 15 minutes : modif allumage chaudiere
     if (!xTimerIsTimerActive(xTimer_activ_chaud))  // si timer de commande n'est pas actif
       maj_etat_chaudiere();
 
+
     // enregistrement valeur pour graphique
+    chaud_marche += chaudiere;
+
     compteur_graph++;
     if (compteur_graph >= skip_graph)  // 1 valeur sur x
     {
@@ -1657,9 +1710,18 @@ void event_mesure_temp()  // toutes les 15 minutes : modif allumage chaudiere
       if (activ_cycle)
       {
         graphique[0][2] = cycle_chaud/17 + 150;   //0=>150  500=>180
+        cout_moy24h += cycle_chaud;  // 50 à 500
       }
-      else   graphique[0][2] = chaudiere*50+150;  // 150:arret 200:marche
+      else   
+      {
+
+        graphique[0][2] = (chaud_marche*20)/skip_graph+140;  // 14:arret 16:marche
+        cout_moy24h += (chaud_marche*12)/skip_graph*83;  // 1000
+      }
+      cpt24_Cout++;
     }
+
+    // cout moyen
   #endif
 }
 
@@ -1683,7 +1745,7 @@ float readBatteryVoltage() {
   // Conversion:
   // raw / 4095.0 * 3.3V (tension ref approx) * 2 (pont diviseur) * 1.1 (facteur corection empirique souvent nécessaire sur ESP32)
   // On commence sans facteur 1.1 pour tester
-  float voltage = (raw / 4095.0) * 3.3 * 2; 
+  float voltage = (raw / 4095.0) * 3.3 * 2.5; 
   return voltage;
 }
 
@@ -1745,7 +1807,13 @@ void envoi_temp_esp_chaudiere()
 {
     // --- MODE THERMOMETRE DISTANT (ESP-NOW) ---
     uint8_t Tint_erreur = lecture_Tint(&Tint);  // Mesure locale
-    if (Tint_erreur) Tint=25.0;
+    if (Tint_erreur) 
+    {
+      Tint=25.0;
+      #ifdef DEBUG
+            Tint = 18.0;
+      #endif
+    }
 
     if (mac_chaudiere[0] || mac_chaudiere[3] || mac_chaudiere[4])
     {
@@ -1830,7 +1898,7 @@ void envoi_temp_esp_chaudiere()
       Serial.printf("etat_now:%i\n\r", etat_now);
       
       cpt_cycle_batt++;
-      if (cpt_cycle_batt >= 92) cpt_cycle_batt=0;
+      if (cpt_cycle_batt >= 90) cpt_cycle_batt=0;
 
       if (deliverySuccess) // envoi reussi
       {   

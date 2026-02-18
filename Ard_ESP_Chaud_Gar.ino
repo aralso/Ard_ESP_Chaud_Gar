@@ -2,7 +2,8 @@
 
 TODO : 
     
-
+v1.8 02/2026 PPE prochaine periode, rechargement consigne apres annul forcage,
+             graphique cout,slide maj, log24h, vbatt, bug programme
 v1.7 02/2026 qq bugs, optimisation taille site_web, consigne vacances
 v1.6 02/2026 Firebeetle, sonde(mode dégradés), Chaud(Batt_sonde_low, freq log batt)
 v1.5 02/2026 esp_sonde et eps_chaudiere ok
@@ -13,7 +14,7 @@ v1.1 12/2025 copie de PAC_Catalane v1.16
 
 Interrogation des données par la liaison série (recep_message) : 2-1 (type1, reg1)
 
-Conso sonde : 37uA en veille, 17mA pdt 7sec => 170uA. Avec 2000mAh => 1,3 Année
+Conso sonde : 37uA en veille, 17mA pdt 1sec => 19uA. Avec 2000mAh => 4 Années
 
 Configuration des options de programmation : 
 - usb CDC on boot :  enable (pour permettre les serial.print)
@@ -32,6 +33,7 @@ Configuration des options de programmation :
 
 #define ESP_CHAUDIERE      // Rôle principal : gestion de la chaudière
 //#define ESP_THERMOMETRE  // Rôle distant : sonde de température
+#define ESP_PAC
 
 // Hardware
 //#define MODE_WT32  // WT32-Eth01 sinon ESP32-CAM ou DOIT ESP32 Devkit V1
@@ -45,21 +47,22 @@ Configuration des options de programmation :
   #define MODE_Wifi  // Wifi sinon Ethernet
   //#define Sans_securite
   #define Sans_websocket
-  #ifdef DEBUG   // debug
-  #endif
+#endif
 
-#else  // Chaudiere
+#ifdef ESP_CHAUDIERE  // Chaudiere
   #define ESP32_Fire2
-  //#define ESP32_v1    // DOIT ESP32 DEVKIt V1  sinon ESP32_S3
   #define MODE_Wifi  // Wifi sinon Ethernet
   #define Sans_websocket
   //#define Sans_securite
-  #ifdef DEBUG   // debug
+  #define WatchDog
+#endif
 
-  #else   // ops
-    #define WatchDog
-  #endif
-
+#ifdef ESP_PAC
+  #define ESP32_Fire2
+  //#define ESP32_v1    // DOIT ESP32 DEVKIt V1  sinon ESP32_S3
+  #define Temp_int_DHT22
+  #define MODE_Wifi  // Wifi sinon Ethernet
+  #define WatchDog
 #endif
 
 //#define Temp_int_DHT22
@@ -75,10 +78,9 @@ Configuration des options de programmation :
 
 
 #define DELAI_PING  180  // en secondes, pour le websocket
-#define Version "V1.7"
+#define Version "V1.8"
 
-#define IP_CHAUDIERE "192.168.251.31" // Adresse IP de l'ESP Chaudière
-#define LATITUDE "48.8461"
+#define LATITUDE "48.8461"  // Garches => pour récupération Temp Ext
 #define LONGITUDE "2.1889"
 
 #define DEBUG_ETHERNET_WEBSERVER_PORT Serial
@@ -339,8 +341,8 @@ uint8_t etat_connect_ethernet = 0;
 AsyncWebServer server(80);
 
 uint8_t cycle24h;
-float  tempI_moy24h=0, tempE_moy24h=0;
-uint8_t cpt24_Tint=0, cpt24_Text=0;
+float  tempI_moy24h=0, tempE_moy24h=0, cout_moy24h=0;
+uint8_t cpt24_Tint=0, cpt24_Text=0,  cpt24_Cout=0;
 
 #define DEBOUNCE_INTERVAL 300  // Temps anti-rebond en ms
 #define VALIDATION_COUNT 10  // Nombre de lectures consécutives pour valider un changement
@@ -871,6 +873,7 @@ void taskHandler(void *parameter) {
                   break;
 
                 case EVENT_WATCHDOG:   // chaque 7.5 secondes
+                {
                   #ifdef WatchDog
                     //delay(param_wdt_delay * 100);
                     vTaskDelay(param_wdt_delay * 100 / portTICK_PERIOD_MS); //  pause pour faire reset watchdog
@@ -879,7 +882,9 @@ void taskHandler(void *parameter) {
                     //Serial.println("reset watchdog Event");
                     vTaskDelay( 100/ portTICK_PERIOD_MS);  // Important de mettre au moins 1ms
                   #endif
-                  break;
+
+                }
+                break;
 
                 case EVENT_3min:
                 {
@@ -928,6 +933,7 @@ void taskHandler(void *parameter) {
                     log_erreur(Code_erreur_http_local,test_http, 0);*/
 
                   vTaskDelay(1000/ portTICK_PERIOD_MS);
+
                   if ((test_wifi!=3) || (test_goog))  // relance wifi
                   {
                     #ifndef NO_RESEAU
@@ -955,7 +961,8 @@ void taskHandler(void *parameter) {
                   {
                     cpt24h_batt=0;
                     float vbatt = readBatteryVoltage();
-                    //Serial.printf("Tension Batterie 24h : %.2f V\n", vbatt);
+
+                    //Serial.printf("Tension Batterie 24h : %.2f %.2f V\n", vbatt, Vbatt_Th);
                     if (nb_err_reseau>255) nb_err_reseau=255;
                     uint8_t val_batt_sonde = (uint8_t)((Vbatt_Th-2.0)*100);
                     if (!Vbatt_Th_I) val_batt_sonde =0; // V_bat non recu
@@ -965,10 +972,13 @@ void taskHandler(void *parameter) {
                   }
 
                   // erreurs Tint, Text, heure
+                  if (err_Tint>254) err_Tint=255;
                   if (err_Tint)
                             log_erreur(Code_erreur_Tint, err_Tint,0);
+                  if (err_Text>254) err_Text=255;
                   if (err_Text)
                             log_erreur(Code_erreur_Text, err_Text,0);
+                  if (err_Heure>254) err_Heure=255;
                   if (err_Heure)
                             log_erreur(Code_erreur_Heure, err_Heure,0);
                   err_Tint=0;
@@ -976,15 +986,22 @@ void taskHandler(void *parameter) {
                   err_Heure=0;
 
                   // graphique des temperatures quotidiennes
-                  uint8_t tempI=1, tempE=1, Cout;
+                  uint8_t tempI=1, tempE=1, Cout=1;
                   if (cpt24_Tint)  tempI = (uint8_t)(tempI_moy24h/cpt24_Tint*10);
                   if (cpt24_Text)  tempE = (uint8_t)(tempE_moy24h/cpt24_Text*10);
-                  Cout = 0;
+                  if (cpt24_Cout)  Cout = (uint8_t)(cout_moy24h/cpt24_Cout/4);  // 1000 -> 250
+                  if (!tempI) tempI=1;  // permet d'afficher quand meme le point sur le graphique
+                  if (!tempE) tempE=1;  // permet d'afficher quand meme le point sur le graphique
+                  if (!Cout) Cout=1;  // permet d'afficher quand meme le point sur le graphique
+
+                  Serial.printf("Temp24h I:%.2f %i E:%.2f %i C:%.2f %i\n\r", tempI_moy24h, cpt24_Tint, tempE_moy24h, cpt24_Text, cout_moy24h, cpt24_Cout);
 
                   tempI_moy24h=0;
                   tempE_moy24h=0;
+                  cout_moy24h=0;
                   cpt24_Tint=0;
                   cpt24_Text=0;
+                  cpt24_Cout=0;
 
                   uint8_t i;
                   for (i = NB_Val_Graph - 1; i; i--) {
@@ -2218,7 +2235,7 @@ uint8_t requete_Get(uint8_t type, const char* var, float *valeur)
   return (res == 0 || res2 == 0) ? 0 : 1;
 }
 
-
+// type 4
 uint8_t requete_Get_String (uint8_t type, String var, char *valeur) 
 {
   int paramV = var.toInt();
@@ -2470,7 +2487,7 @@ uint8_t requete_Set_Action(const char *reg, const char *data)
   return (res+res2-1);
 }
 
-
+// type 4
 uint8_t requete_Set_String(int param, const char *texte)
 {
   //Serial.printf("set2:p:%i lg:%i  %s\n\r",param, strlen(texte), texte);
