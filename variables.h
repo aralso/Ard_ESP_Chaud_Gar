@@ -75,7 +75,8 @@ float readBatteryVoltage();
 extern float Vbatt_Th; // Tension batterie thermomètre
 extern bool Vbatt_Th_I; // indicateur de réception batt sonde
 
-  const int PIN_Chaudiere = 19;
+// ESP32-C6 : pins restant à 0 au reset et au boot : 2, 3, 4, 6, 7, 14
+  const int PIN_Chaudiere = 3;
   const int PIN_Text = 36;      //  Text:Entrée analogique 32 à 36 et 39
   #ifdef ESP32_v1
     const int PIN_RXModbus = 16;  // s3:18  devkitv1:16 RO

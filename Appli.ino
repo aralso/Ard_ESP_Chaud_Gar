@@ -216,7 +216,6 @@ void setup_nvs()
       else
         Serial.printf("Temps reveil : %i sec\n", prolong_veille);
 
-
     #endif
 
   }
@@ -538,7 +537,7 @@ void setup_nvs()
         }
         Serial.printf("Plan %d : %d-%d Typ:%d Cons:%d Apr:%d\n", i, plan[i].ch_debut, plan[i].ch_fin, plan[i].ch_type, plan[i].ch_consigne, plan[i].ch_cons_apres);
       }
-    #endif  // Fin ESP_chaudiere
+  #endif  // Fin ESP_chaudiere et PAC
 
 
 }
@@ -839,7 +838,7 @@ void maj_etat_chaudiere()
             }
             else
             {
-                 if (heure*6 <= plan[i].ch_debut && heure*6 > plan[i].ch_fin) tr=1;
+                 if (heure*6 >= plan[i].ch_debut || heure*6 < plan[i].ch_fin) tr=1;
             }
             if (tr)
             {

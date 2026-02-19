@@ -1,9 +1,10 @@
 /* 
 
 TODO : 
-    
+
 v1.8 02/2026 PPE prochaine periode, rechargement consigne apres annul forcage,
-             graphique cout,slide maj, log24h, vbatt, bug programme
+             graphique cout,slide maj, log24h, vbatt, bug programme, icone flamme
+             pin 3 (ok boot)
 v1.7 02/2026 qq bugs, optimisation taille site_web, consigne vacances
 v1.6 02/2026 Firebeetle, sonde(mode dégradés), Chaud(Batt_sonde_low, freq log batt)
 v1.5 02/2026 esp_sonde et eps_chaudiere ok
@@ -33,7 +34,6 @@ Configuration des options de programmation :
 
 #define ESP_CHAUDIERE      // Rôle principal : gestion de la chaudière
 //#define ESP_THERMOMETRE  // Rôle distant : sonde de température
-#define ESP_PAC
 
 // Hardware
 //#define MODE_WT32  // WT32-Eth01 sinon ESP32-CAM ou DOIT ESP32 Devkit V1
@@ -57,13 +57,6 @@ Configuration des options de programmation :
   #define WatchDog
 #endif
 
-#ifdef ESP_PAC
-  #define ESP32_Fire2
-  //#define ESP32_v1    // DOIT ESP32 DEVKIt V1  sinon ESP32_S3
-  #define Temp_int_DHT22
-  #define MODE_Wifi  // Wifi sinon Ethernet
-  #define WatchDog
-#endif
 
 //#define Temp_int_DHT22
 //#define Temp_int_DS18B20
@@ -106,17 +99,11 @@ static bool eth_connected = false;
 #include "site_web.h"
 #include "time.h"
 #include <base64.h>  // Nécessaire pour encoder les données binaires
-#include <ArduinoOTA.h>
+//#include <ArduinoOTA.h>  // nécessaire pour OTA
 #include <HTTPClient.h>
 #include <Wire.h>
 #include "ClosedCube_HDC1080.h"
 
-// Suppression des warnings de fonctions non utilisées pour ModbusMaster
-/*#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-function"
-#pragma GCC diagnostic pop
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-#pragma GCC diagnostic pop*/
 
 #ifdef __cplusplus
 extern "C" {
@@ -140,6 +127,7 @@ extern "C" {
 #include "esp_pm.h"
 #include "esp_wifi.h"
 
+
 uint8_t err_wifi_repet;  // permet de resetter si le wifi ne se rétablit pas au bout de 4 jours
 
 uint8_t init_masquage=1;
@@ -149,7 +137,7 @@ void envoi_temp_esp_chaudiere();
 uint8_t parseMacString(const char* str, uint8_t mac[6]);
 
 // variable globale de 4000c en RAM pour dump log et autres requetes
-#define MAX_DUMP 5500  // 1050 car par graphique
+#define MAX_DUMP 6900  // 600 + 1050 car par graphique
 char buffer_dmp[MAX_DUMP];  // max 250 logs, 16 octets chacun
 
 
@@ -216,6 +204,9 @@ uint16_t test2=0;
 uint8_t systeme_marche=0;
 
 uint8_t mode_reseau=13;  //  0:pas de reseau 11:wifi_AP_usine  12:wifi_AP   13:wifi_routeur  14:Ethernet filaire 
+#ifdef NO_RESEAU
+  mode_reseau=0;
+#endif
 
 char nom_routeur[16]="";
 char mdp_routeur[16]="";

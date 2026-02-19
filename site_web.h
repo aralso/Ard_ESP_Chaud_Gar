@@ -138,8 +138,8 @@ const char index_html[] PROGMEM = R"rawliteral(
             <div class="input-group" id="Tint-mess-group">
               <label for="LRTT"></label>
               <div class="text">
-              <span class="alert-icon">⚠️</span>
-              Sonde absente depuis
+                <span class="alert-icon">⚠️</span>
+                Sonde absente depuis
                 <span id="LRTT" class="default-action"></span> h
               </div>
             </div>
@@ -147,8 +147,8 @@ const char index_html[] PROGMEM = R"rawliteral(
             <div class="input-group" id="batS-group">
               <label for="batS"></label>
               <div class="text">
-              <span class="alert-icon">⚠️</span>
-              Batterie Sonde faible :
+                <span class="alert-icon">⚠️</span>
+                Batterie Sonde faible :
                 <span id="batS" class="default-action"></span> V
               </div>
             </div>
@@ -157,7 +157,9 @@ const char index_html[] PROGMEM = R"rawliteral(
             <div class="input-group" id="consigne-group">
                 <label for="consigne">Consigne</label>
                 <input id="consigne" type="text" size="6" class="default-action">°C
+                <span id="etat_chaud" class="default-action visibi" style="font-size: 24px; display: none; margin-left: 60px;">&#128293;</span>
             </div>
+
 
             <div class="input-group" id="jusque-group">
                 <label for="fo_jus">
@@ -352,13 +354,6 @@ const char index_html[] PROGMEM = R"rawliteral(
                   <div id="MMC_led" class="default-action" ></div>
                 </div>
               </div>                  
-            </div>
-
-            <div class="input-group">
-              <label for="chaud">Fct chaudiere:</label>
-              <div class="container">
-                <div id="etat_chaud" class="default-action"></div>
-              </div>
             </div>
 
             <div class="input-group">
@@ -618,6 +613,17 @@ const char index_html[] PROGMEM = R"rawliteral(
           }
         }
 
+        if (el.classList.contains('visibi'))  {
+          if (value != 0)
+          {
+            el.style.display = 'inline';
+          }
+          else
+          {
+            el.style.display = 'none';
+          }
+        }
+
         if (el.parentElement.className == 'container')  {
           if (value)
           {
@@ -630,7 +636,7 @@ const char index_html[] PROGMEM = R"rawliteral(
             el.classList.add('led-no');
           }
         }
-        else if (el.nodeName == 'SPAN')  {
+        else if (el.nodeName == 'SPAN' && !el.classList.contains('visibi'))  {
           el.innerHTML = value
         }
         else
@@ -845,7 +851,8 @@ const char index_html[] PROGMEM = R"rawliteral(
       console.log ("Nb capteur DS18B20:"+Nombre_capteurs);
 
 
-      function fetchStatusData() {
+      function fetchStatusData()
+      {
         fetch(`${baseHost}/status?type=${maj}`)
           .then(response => response.json())
           .then(state => updatePageValues(state))
