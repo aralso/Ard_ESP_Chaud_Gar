@@ -100,7 +100,6 @@ uint8_t TPacMin, TPacMax;
 #define MODE 1  // 1:STM32 PID  2:ESP PID
 uint8_t Mode;
 
-uint16_t heure_arret, dernier_fct;
 
 float loi_deau(float temp_ext, float temp_cons, float *Tloi);
 
@@ -804,75 +803,81 @@ void maj_etat_chaudiere()
       if (fo_jus > periode_cycle)      fo_jus -= periode_cycle;
       else fo_jus=0;
     }
-    else if (vacances)   // forcage vacances
+    else 
     {
-      cons_chaud = va_cons;
-      if ((va_date >= date_ac) && (va_heure >= heure))  // fin des vacances
+      if (vacances)   // forcage vacances
       {
-          vacances = 0;
-          preferences_nvs.putUChar("vac", vacances);
-      }
-    }
-    else if (cons_fixe)  // consigne fixe
-    {
-        cons_chaud = co_fi;
-    }
-    else if (planning)  // planning
-    {
-      uint8_t planning_actif = 0;
-      uint8_t consigne_apres_max = 60; // Pour stocker la consigne "après" du dernier programme terminé
-      uint8_t delai_plus_petit = 145; // delai de fin le plus petit
-
-      // 1. Parcours des programmes pour trouver une tranche active
-      for (uint8_t i = 0; i < NB_MAX_PGM; i++) 
-      {
-
-        // Si programme definis (non nul)
-        if (plan[i].ch_debut != 0 || plan[i].ch_fin != 0) 
+        cons_chaud = va_cons;
+        if ((date_ac >= va_date) && (heure >= va_heure))  // fin des vacances
         {
-            // Vérification si on est dans la tranche horaire
-            uint8_t tr=0;
-            if (plan[i].ch_debut < plan[i].ch_fin)  // cas normal
-            {
-                if (heure*6 >= plan[i].ch_debut && heure*6 < plan[i].ch_fin) tr=1;
-            }
-            else
-            {
-                 if (heure*6 >= plan[i].ch_debut || heure*6 < plan[i].ch_fin) tr=1;
-            }
-            if (tr)
-            {
-              cons_chaud = plan[i].ch_consigne;
-              planning_actif = 1;
-              Serial.printf("Planning %d Actif : Consigne = %i\n", i, cons_chaud);
-              break; // Priorité trouvée, on sort
-            }
-
-            // Mémorisation du programme terminé le plus tardif pour la gestion "après"
-            // heure = 18  h_fin=10 =>8   h=18  h_fin=19=>23
-            int16_t delai = heure*6 - plan[i].ch_fin;
-            if (delai <0) delai += 144;
-            if (delai <= delai_plus_petit) 
-            {
-              delai_plus_petit = delai;
-              consigne_apres_max = plan[i].ch_cons_apres;
-            }
+            vacances = 0;
+            preferences_nvs.putUChar("vac", vacances);
         }
       }
-      // 2. Si aucune tranche horaire active, on applique la consigne "après" du dernier programme terminé
-      if (!planning_actif) 
+      if (!vacances)
       {
-        if (consigne_apres_max != 0) 
+        if (cons_fixe)  // consigne fixe
         {
-          cons_chaud = consigne_apres_max;
-          Serial.printf("Planning Inactif. delai: %i. Consigne Apres = %i\n", delai_plus_petit, cons_chaud);
+            cons_chaud = co_fi;
         }
-        else 
+        else if (planning)  // planning
         {
-          // Si aucun programme n'est terminé, Consigne défaut (Consigne_G)
-          cons_chaud = 60;  // 6°C
+          uint8_t planning_actif = 0;
+          uint8_t consigne_apres_max = 60; // Pour stocker la consigne "après" du dernier programme terminé
+          uint8_t delai_plus_petit = 145; // delai de fin le plus petit
+
+          // 1. Parcours des programmes pour trouver une tranche active
+          for (uint8_t i = 0; i < NB_MAX_PGM; i++) 
+          {
+
+            // Si programme definis (non nul)
+            if (plan[i].ch_debut != 0 || plan[i].ch_fin != 0) 
+            {
+                // Vérification si on est dans la tranche horaire
+                uint8_t tr=0;
+                if (plan[i].ch_debut < plan[i].ch_fin)  // cas normal
+                {
+                    if (heure*6 >= plan[i].ch_debut && heure*6 < plan[i].ch_fin) tr=1;
+                }
+                else
+                {
+                    if (heure*6 >= plan[i].ch_debut || heure*6 < plan[i].ch_fin) tr=1;
+                }
+                if (tr)
+                {
+                  cons_chaud = plan[i].ch_consigne;
+                  planning_actif = 1;
+                  Serial.printf("Planning %d Actif : Consigne = %i\n", i, cons_chaud);
+                  break; // Priorité trouvée, on sort
+                }
+
+                // Mémorisation du programme terminé le plus tardif pour la gestion "après"
+                // heure = 18  h_fin=10 =>8   h=18  h_fin=19=>23
+                int16_t delai = heure*6 - plan[i].ch_fin;
+                if (delai <0) delai += 144;
+                if (delai <= delai_plus_petit) 
+                {
+                  delai_plus_petit = delai;
+                  consigne_apres_max = plan[i].ch_cons_apres;
+                }
+            }
+          }
+          // 2. Si aucune tranche horaire active, on applique la consigne "après" du dernier programme terminé
+          if (!planning_actif) 
+          {
+            if (consigne_apres_max != 0) 
+            {
+              cons_chaud = consigne_apres_max;
+              Serial.printf("Planning Inactif. delai: %i. Consigne Apres = %i\n", delai_plus_petit, cons_chaud);
+            }
+            else 
+            {
+              // Si aucun programme n'est terminé, Consigne défaut (Consigne_G)
+              cons_chaud = 60;  // 6°C
+            }
+          }      
         }
-      }      
+      }
     }
     Consigne = cons_chaud;
 
@@ -968,8 +973,6 @@ uint8_t requete_Set_appli (String param, float valf)
   uint8_t res=1;
   int8_t val = round(valf);
 
-  if (cpt_securite)
-  {
     if (param == "consigne")     // Forcage consigne, rajouter duree
     {
       if ((valf >= 6.0) && (valf <= 22.0))  // 6°C à 22°C
@@ -979,7 +982,7 @@ uint8_t requete_Set_appli (String param, float valf)
           //preferences_nvs.putUChar("Cons", Consigne_G);
           res = 0;
       }
-      maj_etat_chaudiere_delai(30); // Mise à jour immédiate
+      maj_etat_chaudiere_delai(15); // Mise à jour immédiate
     }
     if (param == "fo_jus") {
        fo_jus = (uint16_t)round(valf);
@@ -1136,9 +1139,9 @@ uint8_t requete_Set_appli (String param, float valf)
     if (param == "va_date") {
       if (valf >= 0 && valf <= 90)
       {
-        va_date = (uint16_t)round(valf);
         lectureHeure();
-        preferences_nvs.putUShort("Vada", va_date+date_ac);
+        va_date = (uint16_t)round(valf) + date_ac;
+        preferences_nvs.putUShort("VaDa", va_date);
         Serial.printf("date fin vacances: %i\n", va_date);
         res = 0;
         maj_etat_chaudiere_delai(30);
@@ -1177,8 +1180,6 @@ uint8_t requete_Set_appli (String param, float valf)
         maj_etat_chaudiere_delai(20);
       }
     }
-
-  }
 
   return res;
 }
@@ -1713,11 +1714,11 @@ void event_mesure_temp()  // toutes les 15 minutes : modif allumage chaudiere
       }
       else   
       {
-
         graphique[0][2] = (chaud_marche*20)/skip_graph+140;  // 14:arret 16:marche
         cout_moy24h += (chaud_marche*12)/skip_graph*83;  // 1000
       }
       cpt24_Cout++;
+      chaud_marche = 0;
     }
 
     // cout moyen
@@ -1787,7 +1788,6 @@ void OnDataRecv(const esp_now_recv_info_t * info, const uint8_t *incomingData, i
       }
     }
     Serial.printf("✅ Tint mise à jour: %.2f°C\n", Tint);
-    
   }
   else if (receivedMessage.type == 2) { // Batterie
     Vbatt_Th = receivedMessage.value;
@@ -1901,7 +1901,7 @@ void envoi_temp_esp_chaudiere()
 
       if (deliverySuccess) // envoi reussi
       {   
-        // Envoi tension batterie tous les 92 cycles
+        // Envoi tension batterie tous les 90 cycles (23h)
         if (!cpt_cycle_batt)
         {
           float Vbatt = readBatteryVoltage();

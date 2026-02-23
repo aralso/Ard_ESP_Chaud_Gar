@@ -160,6 +160,7 @@ typedef struct {
 constexpr  int NB_Graphique = 6;  // Temp Ext, Temp int, Chaud, MoyText, MoyTint, Cout, 
 constexpr  int NB_Val_Graph = 99;
 
+
 extern uint8_t protocole;
 extern WiFiClient client;
 extern QueueHandle_t eventQueue;  // File d'attente des événements sequenceur
@@ -214,7 +215,6 @@ extern Preferences preferences_nvs;  // Déclaration externe
 extern RTC_DATA_ATTR uint8_t etat_now;
 extern uint8_t Nb_jours_Batt_log;
 
-extern uint16_t heure_arret, dernier_fct;
 extern uint8_t etat_compr; 
 extern volatile bool force_stay_awake;
 extern unsigned long wake_up_time; // Temps de réveil/dernière activité

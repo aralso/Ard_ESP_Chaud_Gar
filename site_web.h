@@ -72,7 +72,7 @@ const char index_html[] PROGMEM = R"rawliteral(
     border:2px solid #f8f9f8;
   }  
   .led-no {
-    background:#181818;
+    background:#363636;
     border-radius:10px;
     width:18px;
     height:18px;
@@ -392,7 +392,8 @@ const char index_html[] PROGMEM = R"rawliteral(
           </section>          
 
           <hr style="width:150px">
-          <label for="nav-toggle-reg" class="toggle-section-label">&#9776;&nbsp;&nbsp;Register Get/ Set</label><input type="checkbox" id="nav-toggle-reg" class="hidden toggle-section-button" checked="checked">
+          <label for="nav-toggle-reg" class="toggle-section-label">&#9776;&nbsp;&nbsp;Register Get/ Set</label>
+          <input type="checkbox" id="nav-toggle-reg" class="hidden toggle-section-button" checked="checked">
           <section class="toggle-section">
               <div class="input-group" id="set-reg-group">
                   <label for="set-reg" style="width:120px">Reg, Value :</label>
@@ -513,10 +514,9 @@ const char index_html[] PROGMEM = R"rawliteral(
     <script>
     NB_Val_Graph=99;
     Nombre_capteurs=0;
-    var graphique = new Array(5);
-    for (i=0; i < 6; i++){
-      graphique[i] = new Array(NB_Val_Graph);
-    }
+    const NB_GRAPH = 6;
+    let graphique = [];
+    for (let i = 0; i < NB_GRAPH; i++) { graphique[i] = new Array(NB_Val_Graph); }
     
     NB_erreurs=10;
     erreur_code = [];

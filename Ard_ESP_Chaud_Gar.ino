@@ -4,7 +4,7 @@ TODO :
 
 v1.8 02/2026 PPE prochaine periode, rechargement consigne apres annul forcage,
              graphique cout,slide maj, log24h, vbatt, bug programme, icone flamme
-             pin 3 (ok boot)
+             pin 3 (ok boot), bug init cpt_cycle_batt, bug vacances
 v1.7 02/2026 qq bugs, optimisation taille site_web, consigne vacances
 v1.6 02/2026 Firebeetle, sonde(mode dégradés), Chaud(Batt_sonde_low, freq log batt)
 v1.5 02/2026 esp_sonde et eps_chaudiere ok
@@ -32,8 +32,8 @@ Configuration des options de programmation :
 - partition : custom (pour permettre code>1,5MOctets)
 */
 
-#define ESP_CHAUDIERE      // Rôle principal : gestion de la chaudière
-//#define ESP_THERMOMETRE  // Rôle distant : sonde de température
+//#define ESP_CHAUDIERE      // Rôle principal : gestion de la chaudière
+#define ESP_THERMOMETRE  // Rôle distant : sonde de température
 
 // Hardware
 //#define MODE_WT32  // WT32-Eth01 sinon ESP32-CAM ou DOIT ESP32 Devkit V1
@@ -215,7 +215,7 @@ unsigned long last_remote_Tint_time = 0, last_remote_Text_time=0, last_remote_he
 int16_t  graphique [NB_Val_Graph][NB_Graphique];
 
 // Status
-RTC_DATA_ATTR uint32_t rtc_magic; //= 0xDEADBEEF;
+RTC_DATA_ATTR uint32_t rtc_magic = 0xDEADBEEF;
 uint8_t rtc_valid;  // 0:non valide-cold reset  1:reset apres deep sleep : RTC valide
 uint16_t nb_err_reseau;
 RTC_DATA_ATTR uint16_t cpt_cycle_batt; // Compteur cycles pour mesure batterie
@@ -537,7 +537,7 @@ void vTimer24HCallback(TimerHandle_t xTimer)
     }
 }
 
-// timeout chaque 60 minutes : cycle
+// timeout chaque 15 minutes : cycle
 void vTimerCycleCallback(TimerHandle_t xTimer)
 {
     systeme_eve_t evt = { EVENT_CYCLE, 0 };  // Exemple : donnée = 123
@@ -904,6 +904,9 @@ void taskHandler(void *parameter) {
 
                 case EVENT_24H:
                 {
+                  #ifdef WatchDog
+                    esp_task_wdt_reset();
+                  #endif
                   uint8_t test_goog=0, test_wifi=3;                  
                   getLocalTime(&timeinfo);  // déclenche resynchro réseau à chaque appel. 5s si pb reseau
 
@@ -985,7 +988,7 @@ void taskHandler(void *parameter) {
                   if (!tempE) tempE=1;  // permet d'afficher quand meme le point sur le graphique
                   if (!Cout) Cout=1;  // permet d'afficher quand meme le point sur le graphique
 
-                  Serial.printf("Temp24h I:%.2f %i E:%.2f %i C:%.2f %i\n\r", tempI_moy24h, cpt24_Tint, tempE_moy24h, cpt24_Text, cout_moy24h, cpt24_Cout);
+                  //Serial.printf("Temp24h I:%.2f %i E:%.2f %i C:%.2f %i\n\r", tempI_moy24h, cpt24_Tint, tempE_moy24h, cpt24_Text, cout_moy24h, cpt24_Cout);
 
                   tempI_moy24h=0;
                   tempE_moy24h=0;
@@ -1043,16 +1046,15 @@ void taskHandler(void *parameter) {
     } // fin du while
 }
 
-// initi des variables RTC, lors d'un cold Reset
+// init des variables RTC, lors d'un cold Reset
 void init_rtc_variables()
 {
-  cpt_cycle_batt = 0;
+  cpt_cycle_batt = 88;
 }
 
 void init_ram_variables()
 {
   cpt24h_batt=6;   // pour esp_chaudiere (chaque jour)
-  cpt_cycle_batt = 88; // pour sonde (chaque 15 min)
   err_Tint=0;
   err_Text=0;
   err_Heure=0;
@@ -1152,14 +1154,8 @@ void setup()
     cpt_securite = 10;
   #endif
 
-  heure_arret=0;
-  dernier_fct=0;
 
-  Serial.printf("**** Initialisation - reset: %s sleep:%i\n\r",resetREASON0, wakeup_reason );
-  //Serial.println(resetReason0);
-  //Serial.print("-");
-  //Serial.println(resetReason1);
-
+  Serial.printf("**** Initialisation - reset: %s sleep:%i rtc:%i\n\r",resetREASON0, wakeup_reason, rtc_valid );
 
   setup_0();   //  --- valeur initiales des graphiques
 
@@ -1654,7 +1650,7 @@ void setup()
     Serial.println("OTA prêt");
   #endif  // fin OTA
 
-  maj_etat_chaudiere_delai(25);
+  maj_etat_chaudiere_delai(15);
 
   Serial.println("fin setup:");
 
@@ -1812,7 +1808,6 @@ void log_erreur(uint8_t code, uint8_t valeur, uint8_t val2)  // Code:1:Tint, 2:T
   delay(100);
   
   if (code >3)  writeLog('E', code, valeur, val2, "Err"); // pas de write pour Tint, Text, Heure
-
 
 }
 
@@ -2192,7 +2187,8 @@ uint8_t requete_Set(uint8_t type, const char* param, const char* valStr)
       }
       temps_activ_secu = 0;
     }
-    res2 = requete_Set_appli (param, valf);
+    if (cpt_securite)
+      res2 = requete_Set_appli (param, valf);
   }
   Serial.printf("res:%i res2:%i\n\r", res, res2);
   return (res+res2-1);
@@ -2444,7 +2440,7 @@ uint8_t requete_Set_Action(const char *reg, const char *data)
       dumpTasksInfo();
       delay(200);
     }
-  // liste les taches
+    // liste les taches
     if (strcmp(reg, "VTASKS") == 0) 
     { 
       res=0; 
@@ -2603,7 +2599,7 @@ uint8_t requete_Set_String(int param, const char *texte)
 }
 
 
-
+// type 2
 uint8_t requete_GetReg(int reg, float *valeur) {
   uint8_t res = 1;
   uint8_t res2 = 1;
@@ -2642,19 +2638,14 @@ uint8_t requete_GetReg(int reg, float *valeur) {
     //Serial.printf("skip:%i\n\r", skip_graph);
   }
 
-
-
-
   res2 = requete_GetReg_appli(reg, valeur);
-
-
-
 
   //if (!res) *valeur = (float)val16;
   //Serial.printf("val_get:%f\n\r", *valeur);
   return (res+res2-1);
 }
 
+// type 2
 uint8_t requete_SetReg(int param, float valeurf)
 {
   int16_t valeur = int16_t(valeurf);
@@ -2692,7 +2683,7 @@ uint8_t requete_SetReg(int param, float valeurf)
     if (param == 4)  // registre 4 : Periode cycle (en minutes)
     {
       //#ifndef DEBUG
-      if ((valeur >= 10) && (valeur <= 120))  // entre 10 et 20 minutes
+      if ((valeur >= 5) && (valeur <= 60))  // entre 5 et 60 minutes
       {
         res = 0;
         periode_cycle = valeur;
@@ -2852,6 +2843,7 @@ void requete_status(char *json_response, uint8_t socket, uint8_t type)
   p += sprintf(p, "\"va_cons\":%i,", va_cons);
   uint8_t va_date8 = 1;
   if (vacances) va_date8 = va_date-date_ac;
+  else va_date = date_ac+1;
   if (va_date8 > 30)  va_date8 = 30;
   p += sprintf(p, "\"va_date\":%i,", va_date8);
   p += sprintf(p, "\"va_heure\":%i,", va_heure);
@@ -2880,8 +2872,6 @@ void requete_status(char *json_response, uint8_t socket, uint8_t type)
   p += sprintf(p, "\"Tloi\":%.1f,", T_loi_eau);
   p += sprintf(p, "\"Tobj\":%.1f,", T_obj);
   p += sprintf(p, "\"Output\":%.3f,", Output);
-  p += sprintf(p, "\"DerFct\":%i,", dernier_fct);
-  p += sprintf(p, "\"DerFin\":%i,", heure_arret);
   p += sprintf(p, "\"MMC\":%i,", MMCh-1);
   uint16_t last_temp_time = (mill - last_remote_Tint_time)/1000/60;  // temps en minutes
   p += sprintf(p, "\"LRTT\":%i,", last_temp_time);
@@ -4047,8 +4037,6 @@ void modif_timer_cycle(void)
     xTimerChangePeriod(xTimer_Cycle,(uint32_t)perio*(1000/portTICK_PERIOD_MS),100);
     xTimerStart(xTimer_Cycle,100);
 
-  uint16_t period = periode_cycle*60;
-  if (mode_rapide) period = periode_cycle;
 }
 
 void print_task_states() {
